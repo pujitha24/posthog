@@ -147,6 +147,7 @@ export function DashboardItems({ showCreateAnomalyAlertButton }: DashboardItemsP
         setTileOverride,
         setDashboardEditing,
         toggleTileGroup,
+        preloadTileGroup,
     } = useActions(dashboardLogic)
     const { updateWidgetTile } = useAsyncActions(dashboardLogic)
     const { renameInsight } = useActions(insightsModel)
@@ -832,6 +833,7 @@ export function DashboardItems({ showCreateAnomalyAlertButton }: DashboardItemsP
                         tileCount={section.tiles.length}
                         collapsed={collapsedTileGroupKeys.includes(section.groupKey)}
                         onToggle={() => toggleTileGroup(section.groupKey)}
+                        onPreload={() => preloadTileGroup(section.groupKey)}
                     >
                         {grid}
                     </DashboardTileGroup>

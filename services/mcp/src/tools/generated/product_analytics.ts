@@ -14,6 +14,22 @@ import {
 } from '@/tools/tool-utils'
 import type { Context, ToolBase, ZodObjectAny } from '@/tools/types'
 
+const VizSpecificOptions = z.object({
+    ActionsPie: z
+        .object({
+            disableHoverOffset: z.coerce.boolean().optional(),
+            hideAggregation: z.coerce.boolean().optional(),
+        })
+        .optional(),
+    RETENTION: z
+        .object({
+            hideLineGraph: z.coerce.boolean().optional(),
+            hideSizeColumn: z.coerce.boolean().optional(),
+            useSmallLayout: z.coerce.boolean().optional(),
+        })
+        .optional(),
+})
+
 const AssistantInsightVizNode = z.object({
     kind: z.literal('InsightVizNode').default('InsightVizNode'),
     source: z
@@ -21,6 +37,9 @@ const AssistantInsightVizNode = z.object({
         .describe(
             'Product analtycs query objects like TrendsQuery, FunnelsQuery, RetentionQuery, PathsQuery, StickinessQuery, LifecycleQuery'
         ),
+    vizSpecificOptions: VizSpecificOptions.describe(
+        'Chart rendering options. Set `ActionsPie.hideAggregation` to `true` to hide the total on a pie chart.'
+    ).optional(),
 })
 
 const AssistantDataVisualizationBoxPlotSettings = z.object({

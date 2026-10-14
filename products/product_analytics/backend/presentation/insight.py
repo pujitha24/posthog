@@ -1535,7 +1535,7 @@ class MCPInsightSerializer(InsightSerializer):
         # Raw HogQL → DataVisualizationNode
         try:
             return schema.DataVisualizationNode(source=schema.HogQLQuery.model_validate(value)).model_dump(
-                exclude_none=True, mode="json"
+                exclude_none=True, mode="json", by_alias=True
             )
         except PydanticValidationError:
             pass
@@ -1544,7 +1544,7 @@ class MCPInsightSerializer(InsightSerializer):
         for wrapped_cls in (schema.DataVisualizationNode, schema.BIVisualizationNode, schema.InsightVizNode):
             try:
                 wrapped_node = wrapped_cls.model_validate(value)
-                normalized_query = wrapped_node.model_dump(exclude_none=True, mode="json")
+                normalized_query = wrapped_node.model_dump(exclude_none=True, mode="json", by_alias=True)
                 if isinstance(wrapped_node, (schema.DataVisualizationNode, schema.BIVisualizationNode)):
                     box_plot = wrapped_node.chartSettings.boxPlot if wrapped_node.chartSettings else None
                     if box_plot is not None:
@@ -1559,14 +1559,14 @@ class MCPInsightSerializer(InsightSerializer):
         # A metrics insight saves its query bare, as the metrics editor and the metrics dashboard builders do
         for metrics_cls in (schema.MetricsQuery, schema.MetricsHistogramQuery):
             try:
-                return metrics_cls.model_validate(value).model_dump(exclude_none=True, mode="json")
+                return metrics_cls.model_validate(value).model_dump(exclude_none=True, mode="json", by_alias=True)
             except PydanticValidationError:
                 pass
 
         # Raw product analytics query → InsightVizNode
         try:
             return schema.InsightVizNode.model_validate({"kind": "InsightVizNode", "source": value}).model_dump(
-                exclude_none=True, mode="json"
+                exclude_none=True, mode="json", by_alias=True
             )
         except PydanticValidationError as exc:
             details = "; ".join(f"{'.'.join(str(part) for part in e['loc'])}: {e['msg']}" for e in exc.errors())

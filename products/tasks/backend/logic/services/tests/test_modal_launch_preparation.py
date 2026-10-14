@@ -55,7 +55,13 @@ esac
         path = bin_dir / name
         path.write_text(f"#!/bin/bash\n{command}\n")
         path.chmod(0o755)
-    return {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    untrusted_bin = tmp_path / "untrusted"
+    untrusted_bin.mkdir()
+    for name in ("agentsh", "mkdir"):
+        path = untrusted_bin / name
+        path.write_text(f"#!/bin/bash\ntouch {shlex.quote(str(tmp_path / 'untrusted-executed'))}\nexit 99\n")
+        path.chmod(0o755)
+    return {"PATH": f"{untrusted_bin}:{os.environ['PATH']}"}
 
 
 def run_preparation(
@@ -63,6 +69,11 @@ def run_preparation(
 ) -> subprocess.CompletedProcess[str]:
     script = build_modal_launch_preparation_script(allowed_domains)
     script = re.sub(r"/(?:tmp|etc|opt|var)/", lambda match: f"{root}{match.group()}", script)
+    script = script.replace(
+        "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        f"export PATH={shlex.quote(str(root / 'bin'))}:/usr/bin:/bin",
+    )
+    script = script.replace("/usr/bin/agentsh", str(root / "bin/agentsh"))
     if environment.get("PREPARATION_REAL_DAEMON") != "1":
         script = 'kill() { [ "${PREPARATION_FAULT:-}" != daemon_start ]; }\n' + script
     script_path = root / "preparation.sh"
@@ -99,6 +110,7 @@ def test_preparation_installs_complete_files_and_can_be_reapplied(
         assert not list(tmp_path.rglob("*.tmp.*"))
         assert not (tmp_path / "preparation.sh").exists()
         assert not (tmp_path / "injected").exists()
+        assert not (tmp_path / "untrusted-executed").exists()
     if allowed_domains is None:
         assert not (tmp_path / "etc/agentsh").exists()
         assert not (tmp_path / SESSION_ID_FILE.lstrip("/")).exists()
@@ -198,6 +210,11 @@ def test_failed_preparation_never_launches_agent_server(failure: str, log_availa
 
     with (
         patch.object(sandbox, "execute", side_effect=execute) as remote_execute,
+        patch.object(
+            sandbox,
+            "_agent_server_preflight",
+            return_value=AgentServerPreflight(reused=False, capabilities=frozenset()),
+        ),
         patch.object(
             sandbox,
             "write_file",

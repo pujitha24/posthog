@@ -402,6 +402,7 @@ class TestLocalModalBuildContext:
             assert (root / LOCAL_MODAL_AGENT_SHADOW_DIR / "go.mod").is_file()
             assert (root / LOCAL_MODAL_AGENT_SHADOW_DIR / "main.go").is_file()
             assert (root / LOCAL_MODAL_HOGLI_SHIM_SCRIPT).is_file()
+            assert (root / "products/tasks/backend/sandbox/images/task_filesystem.py").is_file()
         finally:
             shutil.rmtree(context_dir, ignore_errors=True)
             _prepare_local_modal_build_context.cache_clear()

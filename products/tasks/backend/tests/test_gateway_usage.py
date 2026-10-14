@@ -60,7 +60,7 @@ class TestGatewayUsage(BaseTest):
     def _process(self, run: TaskRun, *, limit: int = 20) -> TaskRunCost:
         return process_pending_gateway_usage(run_id=run.id, team_id=self.team.id, limit=limit)
 
-    @patch("aiohttp.ClientSession._request")
+    @patch("aiohttp.ClientSession._request", autospec=True)
     def test_records_cost_by_model_and_provider_and_removes_processed_ids(self, get: Mock) -> None:
         run = self._run()
         observed_costs: dict[UUID, int | None] = {}
@@ -81,6 +81,7 @@ class TestGatewayUsage(BaseTest):
         assert self._process(run).token_cost == 2
         assert observed_costs == {run.id: 20_010}
         assert get.call_count == 4
+        assert get.call_args.args[0].trust_env is True
         assert get.call_args.kwargs["timeout"].total == 15
         run.refresh_from_db()
         assert run.state == {

@@ -17,7 +17,9 @@ class GatewayRequestCost:
     cost_microusd: int
 
 
-async def fetch_gateway_cost(request_id: str, *, base_url: str, api_key: str) -> GatewayRequestCost | None:
+async def fetch_gateway_cost(
+    request_id: str, *, base_url: str, api_key: str, trust_env: bool = False
+) -> GatewayRequestCost | None:
     import aiohttp  # noqa: PLC0415 - keeps aiohttp off Django's startup path
 
     base_url = base_url.rstrip("/").removesuffix("/v1")
@@ -25,7 +27,7 @@ async def fetch_gateway_cost(request_id: str, *, base_url: str, api_key: str) ->
         return None
     try:
         async with (
-            aiohttp.ClientSession(trust_env=True) as session,
+            aiohttp.ClientSession(trust_env=trust_env) as session,
             session.get(
                 f"{base_url}/v1/usage/{request_id}",
                 headers={"Authorization": f"Bearer {api_key}"},

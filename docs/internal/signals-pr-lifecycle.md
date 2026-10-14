@@ -201,3 +201,5 @@ The button fits its label, including when it appears below the Solution section.
 Signals stores one-time grant history separately from project records, so project deletion cannot restore an organization allocation. Dedicated organization allocation rows, project grants, operation funding, report reservations, and unique cost sources support trial policy without locking Team or Organization rows. These additive tables do not activate trials.
 
 The Tasks facade exposes token and compute costs in integer micro-USD through `get_task_run_actual_cost`. Compute uses the existing Tasks rate card. Unknown costs remain incomplete, including unfinished sandbox sessions. The trial allowance uses these costs without the customer task fee in `total_spend`.
+
+Internal gateway usage lookups bypass environment proxies. Sandbox gateway usage lookups retain environment proxy routing.

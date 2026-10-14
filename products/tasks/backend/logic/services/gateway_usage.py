@@ -203,7 +203,10 @@ def get_task_cost(*, team_id: int, task_id: UUID) -> TaskRunCost:
 
 async def _fetch_gateway_cost(request_id: str) -> GatewayRequestCost | None:
     return await fetch_gateway_cost(
-        request_id, base_url=settings.SANDBOX_AI_GATEWAY_URL or "", api_key=settings.SANDBOX_AI_GATEWAY_MINT_KEY or ""
+        request_id,
+        base_url=settings.SANDBOX_AI_GATEWAY_URL or "",
+        api_key=settings.SANDBOX_AI_GATEWAY_MINT_KEY or "",
+        trust_env=True,
     )
 
 

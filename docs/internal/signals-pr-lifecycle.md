@@ -202,4 +202,6 @@ Signals stores one-time grant history separately from project records, so projec
 
 The Tasks facade exposes token and compute costs in integer micro-USD through `get_task_run_actual_cost`. Compute uses the existing Tasks rate card. Unknown costs remain incomplete, including unfinished sandbox sessions. The trial allowance uses these costs without the customer task fee in `total_spend`.
 
+New cloud runs record whether provisioning has started. The workflow marks provisioning as started while locking the run before entering `IN_PROGRESS`; a terminal run cannot enter that state. A terminal run with an explicit unstarted marker and no sandbox identity or session has complete zero compute cost, so reconciliation can release its unused trial reservation. Runs with missing evidence, started provisioning, or unfinished sessions retain incomplete accounting.
+
 Internal gateway usage lookups bypass environment proxies. Sandbox gateway usage lookups retain environment proxy routing.

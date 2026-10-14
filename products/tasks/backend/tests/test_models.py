@@ -21,6 +21,7 @@ from posthog.models.user import User
 from posthog.models.user_integration import UserIntegration
 from posthog.storage import object_storage
 
+from products.tasks.backend.constants import SANDBOX_PROVISIONING_STARTED_STATE_KEY
 from products.tasks.backend.models import (
     MAX_PENDING_FOLLOWUP_CONTENT_CHARS,
     MAX_PENDING_FOLLOWUP_MESSAGES,
@@ -1125,6 +1126,11 @@ class TestTaskRun(TestCase):
         run = self.task.create_run(mode="interactive")
 
         self.assertNotIn("initial_permission_mode", run.state)
+
+    def test_create_run_initializes_provisioning_evidence(self) -> None:
+        run = self.task.create_run(extra_state={SANDBOX_PROVISIONING_STARTED_STATE_KEY: True})
+
+        assert run.state[SANDBOX_PROVISIONING_STARTED_STATE_KEY] is False
 
     def test_create_run_snapshots_task_ownership_version(self):
         ownership_version = str(uuid.uuid4())

@@ -35,7 +35,6 @@ import {
     StickinessCriteria,
     TrendsFilterLegacy,
     TrendsFormulaNode,
-    VizSpecificOptions,
 } from './schema-general'
 import { integer, positive_integer } from './type-utils'
 
@@ -1825,8 +1824,17 @@ export interface AssistantInsightVizNode {
     kind: NodeKind.InsightVizNode
     /** Product analtycs query objects like TrendsQuery, FunnelsQuery, RetentionQuery, PathsQuery, StickinessQuery, LifecycleQuery */
     source: Record<string, any>
-    /** Chart rendering options. Set `ActionsPie.hideAggregation` to `true` to hide the total on a pie chart. */
-    vizSpecificOptions?: VizSpecificOptions
+    /** Chart rendering options. */
+    vizSpecificOptions?: AssistantVizSpecificOptions
+}
+
+export interface AssistantPieChartOptions {
+    /** Hide the total on a pie chart. */
+    hideAggregation?: boolean
+}
+
+export interface AssistantVizSpecificOptions {
+    ActionsPie?: AssistantPieChartOptions
 }
 
 /**
@@ -1867,9 +1875,8 @@ export interface AssistantDataVisualizationAxisDisplaySettings {
     /** Which Y axis this numeric series should use. Use `right` for a secondary Y axis. */
     yAxisPosition?: 'left' | 'right'
     /**
-     * Override how this individual series is rendered, independent of the chart-level `display` type.
-     * Use this to mix series types — e.g. plot one series as `bar` and overlay another as `line`.
-     * `auto` follows the chart-level display type.
+     * How to render this series, overriding the chart-level `display`.
+     * Mix types, e.g. one series as `bar` and another as `line`. `auto` follows `display`.
      */
     displayType?: 'auto' | 'line' | 'bar' | 'area'
     /** Draw a linear trend line for this series. Only meaningful for line, bar, and area charts. */

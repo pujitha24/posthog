@@ -2395,7 +2395,7 @@
                     "type": "string"
                 },
                 "displayType": {
-                    "description": "Override how this individual series is rendered, independent of the chart-level `display` type. Use this to mix series types — e.g. plot one series as `bar` and overlay another as `line`. `auto` follows the chart-level display type.",
+                    "description": "How to render this series, overriding the chart-level `display`. Mix types, e.g. one series as `bar` and another as `line`. `auto` follows `display`.",
                     "enum": ["auto", "line", "bar", "area"],
                     "type": "string"
                 },
@@ -3758,8 +3758,8 @@
                     "type": "object"
                 },
                 "vizSpecificOptions": {
-                    "$ref": "#/definitions/VizSpecificOptions",
-                    "description": "Chart rendering options. Set `ActionsPie.hideAggregation` to `true` to hide the total on a pie chart."
+                    "$ref": "#/definitions/AssistantVizSpecificOptions",
+                    "description": "Chart rendering options."
                 }
             },
             "required": ["kind", "source"],
@@ -4302,6 +4302,16 @@
                 }
             },
             "required": ["kind", "pathsFilter"],
+            "type": "object"
+        },
+        "AssistantPieChartOptions": {
+            "additionalProperties": false,
+            "properties": {
+                "hideAggregation": {
+                    "description": "Hide the total on a pie chart.",
+                    "type": "boolean"
+                }
+            },
             "type": "object"
         },
         "AssistantPropertyFilter": {
@@ -5791,6 +5801,15 @@
                 }
             },
             "required": ["id", "tool_call_id", "content"],
+            "type": "object"
+        },
+        "AssistantVizSpecificOptions": {
+            "additionalProperties": false,
+            "properties": {
+                "ActionsPie": {
+                    "$ref": "#/definitions/AssistantPieChartOptions"
+                }
+            },
             "type": "object"
         },
         "AssistantWebAnalyticsQueryBase": {

@@ -521,10 +521,9 @@ class AssistantDataVisualizationAxisDisplaySettings(BaseModel):
     displayType: DisplayType | None = Field(
         default=None,
         description=(
-            "Override how this individual series is rendered, independent of the"
-            " chart-level `display` type. Use this to mix series types — e.g. plot one"
-            " series as `bar` and overlay another as `line`. `auto` follows the"
-            " chart-level display type."
+            "How to render this series, overriding the chart-level `display`. Mix"
+            " types, e.g. one series as `bar` and another as `line`. `auto` follows"
+            " `display`."
         ),
     )
     label: str | None = Field(
@@ -830,6 +829,13 @@ class AssistantPathCleaningFilter(BaseModel):
     )
 
 
+class AssistantPieChartOptions(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    hideAggregation: bool | None = Field(default=None, description="Hide the total on a pie chart.")
+
+
 class AssistantRecordingPropertyFilter2(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -951,6 +957,13 @@ class AssistantUpdateEvent(BaseModel):
     content: str
     id: str
     tool_call_id: str
+
+
+class AssistantVizSpecificOptions(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    ActionsPie: AssistantPieChartOptions | None = None
 
 
 class BICategoryGroup(BaseModel):
@@ -4392,12 +4405,7 @@ class AssistantInsightVizNode(BaseModel):
             " RetentionQuery, PathsQuery, StickinessQuery, LifecycleQuery"
         ),
     )
-    vizSpecificOptions: VizSpecificOptions | None = Field(
-        default=None,
-        description=(
-            "Chart rendering options. Set `ActionsPie.hideAggregation` to `true` to hide the total on a pie chart."
-        ),
-    )
+    vizSpecificOptions: AssistantVizSpecificOptions | None = Field(default=None, description="Chart rendering options.")
 
 
 class AssistantLifecycleFilter(BaseModel):

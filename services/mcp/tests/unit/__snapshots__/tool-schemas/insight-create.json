@@ -50,6 +50,21 @@
                                 "type": "string"
                             },
                             "type": "object"
+                        },
+                        "vizSpecificOptions": {
+                            "description": "Chart rendering options.",
+                            "properties": {
+                                "ActionsPie": {
+                                    "properties": {
+                                        "hideAggregation": {
+                                            "description": "Hide the total on a pie chart.",
+                                            "type": "boolean"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            },
+                            "type": "object"
                         }
                     },
                     "required": ["source"],
@@ -283,7 +298,7 @@
                                                             "type": "string"
                                                         },
                                                         "displayType": {
-                                                            "description": "Override how this individual series is rendered, independent of the chart-level `display` type. Use this to mix series types — e.g. plot one series as `bar` and overlay another as `line`. `auto` follows the chart-level display type.",
+                                                            "description": "How to render this series, overriding the chart-level `display`. Mix types, e.g. one series as `bar` and another as `line`. `auto` follows `display`.",
                                                             "enum": ["auto", "line", "bar", "area"],
                                                             "type": "string"
                                                         },
@@ -356,7 +371,7 @@
                                                                 "type": "string"
                                                             },
                                                             "displayType": {
-                                                                "description": "Override how this individual series is rendered, independent of the chart-level `display` type. Use this to mix series types — e.g. plot one series as `bar` and overlay another as `line`. `auto` follows the chart-level display type.",
+                                                                "description": "How to render this series, overriding the chart-level `display`. Mix types, e.g. one series as `bar` and another as `line`. `auto` follows `display`.",
                                                                 "enum": ["auto", "line", "bar", "area"],
                                                                 "type": "string"
                                                             },
@@ -466,7 +481,7 @@
                                                                 "type": "string"
                                                             },
                                                             "displayType": {
-                                                                "description": "Override how this individual series is rendered, independent of the chart-level `display` type. Use this to mix series types — e.g. plot one series as `bar` and overlay another as `line`. `auto` follows the chart-level display type.",
+                                                                "description": "How to render this series, overriding the chart-level `display`. Mix types, e.g. one series as `bar` and another as `line`. `auto` follows `display`.",
                                                                 "enum": ["auto", "line", "bar", "area"],
                                                                 "type": "string"
                                                             },

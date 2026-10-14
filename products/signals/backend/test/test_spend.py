@@ -52,6 +52,12 @@ class TestSpendPricing(SimpleTestCase):
 
 
 class TestSignalSpend(BaseTest):
+    def setUp(self) -> None:
+        super().setUp()
+        self.enterContext(
+            patch("products.signals.backend.trial_llm_execution.TrialLLMExecution.prepare", return_value=None)
+        )
+
     @parameterized.expand([("generation",), ("task",)])
     def test_clickhouse_spend_retries_until_visible_and_tracks_later_costs(self, source: str) -> None:
         driver = str(uuid4())

@@ -23,7 +23,7 @@ import type { Context, Env, PinnedActiveContext, Tool, ZodObjectAny } from '@/to
 
 import { McpSessionRedisStore } from './cache/McpSessionRedisStore'
 import type { RedisLike } from './cache/RedisCache'
-import { MCP_EXEC_SKILLS_FEATURE_FLAG } from './constants'
+import { MCP_EXEC_SKILLS_FEATURE_FLAG, MCP_OPENAI_RESULT_FILES_FEATURE_FLAG } from './constants'
 import {
     buildMCPRequestContext,
     getEffectiveMCPClientContext,
@@ -154,7 +154,14 @@ export class RequestStateResolver {
         // MCP_GATEWAY_FLAG gates no tool of its own — it gates the third-party tools `exec`
         // resolves — so the tool-definition scan can't discover it; join it in explicitly.
         // MCP_EXEC_SKILLS_FEATURE_FLAG gates the `learn` skill commands the same way.
-        const allFlagKeys = [...new Set([...getRequiredFeatureFlags(), MCP_GATEWAY_FLAG, MCP_EXEC_SKILLS_FEATURE_FLAG])]
+        const allFlagKeys = [
+            ...new Set([
+                ...getRequiredFeatureFlags(),
+                MCP_GATEWAY_FLAG,
+                MCP_EXEC_SKILLS_FEATURE_FLAG,
+                MCP_OPENAI_RESULT_FILES_FEATURE_FLAG,
+            ]),
+        ]
 
         const flagAnalyticsContext = await reqCtx.safelyGetAnalyticsContext(context)
         const flagGroups = flagAnalyticsContext ? buildMCPAnalyticsGroups(flagAnalyticsContext) : undefined

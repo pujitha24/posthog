@@ -28,6 +28,7 @@ import { estimateTokens } from '@/lib/estimate-tokens'
 import { resolveGatewayTools } from '@/lib/gateway-tools'
 import { findIgnoredInputKeys, withIgnoredInputKeys } from '@/lib/ignored-input-keys'
 import { getPostHogClient } from '@/lib/posthog'
+import { offloadToolResult } from '@/lib/result-files'
 import { isPrivateScoutTrialTool } from '@/lib/tool-privacy'
 import {
     createExecTool,
@@ -448,6 +449,9 @@ export class ToolExecutor {
                 })
             }
 
+            const responseAnalyticsProperties = toolResultAnalyticsProperties(response)
+            response = await offloadToolResult(response, state)
+
             void trackToolCall(
                 tool.name,
                 duration,
@@ -458,7 +462,7 @@ export class ToolExecutor {
                     ...skillShape,
                     input_tokens: estimateTokens(validation.data),
                     output_tokens: estimateResponseTokens(response),
-                    ...toolResultAnalyticsProperties(response),
+                    ...responseAnalyticsProperties,
                 },
                 analyticsMeta,
                 this.servedToolDescription(tool.name)
@@ -627,7 +631,7 @@ export class ToolExecutor {
             const handlerResult = await resolved.handler(state.context, validation.data)
             const duration = Date.now() - startMs
 
-            const response = isToolCallPayload(handlerResult)
+            let response = isToolCallPayload(handlerResult)
                 ? handlerResult
                 : buildToolResultPayload({
                       handlerResult,
@@ -647,6 +651,11 @@ export class ToolExecutor {
                 ? errorAnalyticsProperties(classifyToolError(innerFailure.error, execToolName()), innerFailure.error)
                 : undefined
 
+            const responseAnalyticsProperties = toolResultAnalyticsProperties(response)
+            if (!innerFailure) {
+                response = await offloadToolResult(response, state)
+            }
+
             void trackToolCall(
                 execToolName(),
                 duration,
@@ -663,7 +672,7 @@ export class ToolExecutor {
                     output_tokens: estimateResponseTokens(response),
                     ...execMetrics.commandMeta,
                     ...(execMetrics.resultEmpty ? { mcp_result_empty: true } : {}),
-                    ...toolResultAnalyticsProperties(response),
+                    ...responseAnalyticsProperties,
                 },
                 analyticsMeta,
                 this.servedToolDescription(execToolName())

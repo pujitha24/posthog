@@ -181,7 +181,8 @@ class TestHoglandSandboxExecution:
 
         assert "secret" not in str(err.value.context)
 
-    def test_execute_stream_buffers_output_and_defaults_missing_exit_to_minus_one(self):
+    @pytest.mark.parametrize("buffer_stdout", [False, True])
+    def test_execute_stream_buffers_output_and_defaults_missing_exit_to_minus_one(self, buffer_stdout: bool):
         box = _mock_box()
         events = [
             {"kind": "stdout", "data": "a"},
@@ -191,10 +192,12 @@ class TestHoglandSandboxExecution:
         box.exec_stream.return_value = iter([ExecEvent.model_validate(e) for e in events])
         sandbox = _running_sandbox(box)
 
-        stream = sandbox.execute_stream("cmd")
+        stream = sandbox.execute_stream("cmd", isolated=not buffer_stdout, buffer_stdout=buffer_stdout)
         assert list(stream.iter_stdout()) == ["a", "b"]
         result = stream.wait()
-        assert (result.stdout, result.stderr, result.exit_code) == ("ab", "warn", -1)
+        assert (result.stdout, result.stderr, result.exit_code) == ("ab" if buffer_stdout else "", "warn", -1)
+        if not buffer_stdout:
+            assert box.exec_stream.call_args.args[0][:4] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "/bin/bash"]
 
 
 class TestHoglandSandboxLifecycle:

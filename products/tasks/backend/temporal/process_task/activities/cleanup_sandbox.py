@@ -2,13 +2,16 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
+from django.db import transaction
+
 from temporalio import activity
 
 from posthog.temporal.common.utils import asyncify
 
-from products.tasks.backend.exceptions import SandboxNotFoundError
+from products.tasks.backend.exceptions import SandboxNotFoundError, SandboxNotRunningError
 from products.tasks.backend.logic.services.gateway_usage import refresh_task_run_cost
 from products.tasks.backend.logic.services.sandbox import get_sandbox_class_for_sandbox_id
+from products.tasks.backend.logic.services.sandbox_recovery import SandboxRecoveryArchive
 from products.tasks.backend.logic.services.sandbox_usage import (
     close_sandbox_session,
     measure_sandbox_billed_cpu_usage,
@@ -22,28 +25,39 @@ from products.tasks.backend.temporal.observability import log_activity_execution
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=False)
 class CleanupSandboxInput:
     sandbox_id: str
     run_id: str | None = None
     complete_stream_on_cleanup: bool = False
     stop_agent_server_on_cleanup: bool = False
     raise_on_error: bool = False
+    retain_sandbox: bool = False
+    recovery_deadline: float | None = None
+    stream_generation: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CompleteRunStreamInput:
     run_id: str
+    stream_generation: str | None = None
 
 
-def publish_run_stream_completion(run_id: str) -> None:
+def publish_run_stream_completion(run_id: str, *, stream_generation: str | None = None) -> None:
     state = TaskRun.objects.filter(id=run_id).values_list("state", flat=True).first()
-    if not publish_task_run_stream_complete(run_id, run_uses_dedicated_stream(state)):
+    published = (
+        publish_task_run_stream_complete(
+            run_id, run_uses_dedicated_stream(state), expected_generation=stream_generation
+        )
+        if stream_generation is not None
+        else publish_task_run_stream_complete(run_id, run_uses_dedicated_stream(state))
+    )
+    if not published:
         raise RuntimeError(f"Failed to complete task run stream {run_id}")
 
 
 def cleanup_sandbox_now(input: CleanupSandboxInput) -> None:
-    strict_cleanup = input.complete_stream_on_cleanup or input.raise_on_error
+    strict_cleanup = input.complete_stream_on_cleanup or input.raise_on_error or input.retain_sandbox
     stream_completion_safe = False
     cpu_usage_usec = None
     billed_cpu_usage_usec = None
@@ -57,9 +71,19 @@ def cleanup_sandbox_now(input: CleanupSandboxInput) -> None:
             logger.warning(
                 "cleanup_sandbox_gateway_accounting_lookup_failed", extra={"run_id": input.run_id}, exc_info=True
             )
+    if input.retain_sandbox and run_id is not None:
+        try:
+            with transaction.atomic():
+                TaskRun.update_state_atomic(run_id, updates={"sandbox_retained_for_recovery": input.sandbox_id})
+                TaskRun.clear_sandbox_connection_state_atomic(run_id, input.sandbox_id)
+        except TaskRun.DoesNotExist:
+            pass
+        except Exception as error:
+            cleanup_error = error
+            logger.warning("cleanup_sandbox_recovery_state_failed", extra={"run_id": input.run_id}, exc_info=True)
     try:
         sandbox = get_sandbox_class_for_sandbox_id(input.sandbox_id).get_by_id(input.sandbox_id)
-    except SandboxNotFoundError:
+    except (SandboxNotFoundError, SandboxNotRunningError):
         stream_completion_safe = True
         sandbox = None
     except Exception as error:
@@ -68,30 +92,52 @@ def cleanup_sandbox_now(input: CleanupSandboxInput) -> None:
         sandbox = None
 
     if sandbox is not None:
-        if input.complete_stream_on_cleanup or input.stop_agent_server_on_cleanup:
+        sandbox_available = True
+        if input.complete_stream_on_cleanup or input.stop_agent_server_on_cleanup or input.retain_sandbox:
             try:
                 stop_result = sandbox.stop_agent_server()
                 if stop_result.exit_code != 0:
+                    if input.retain_sandbox:
+                        cleanup_error = RuntimeError("Retained sandbox agent did not stop")
                     logger.warning(
                         "cleanup_sandbox_agent_server_shutdown_timed_out",
                         extra={"sandbox_id": input.sandbox_id},
                     )
-            except Exception:
+            except (SandboxNotFoundError, SandboxNotRunningError):
+                sandbox_available = False
+            except Exception as error:
+                if input.retain_sandbox:
+                    cleanup_error = error
                 logger.warning(
                     "cleanup_sandbox_agent_server_shutdown_failed",
                     extra={"sandbox_id": input.sandbox_id},
                     exc_info=True,
                 )
 
+        if input.retain_sandbox and run_id is not None and sandbox_available and cleanup_error is None:
+            try:
+                recovery_run = TaskRun.objects.get(id=run_id)
+                SandboxRecoveryArchive.create(recovery_run, sandbox, deadline=input.recovery_deadline)
+            except TaskRun.DoesNotExist:
+                pass
+            except (SandboxNotFoundError, SandboxNotRunningError):
+                pass
+            except Exception as error:
+                cleanup_error = error
+                logger.warning("cleanup_sandbox_recovery_archive_failed", extra={"run_id": input.run_id}, exc_info=True)
+
         cpu_usage_usec, cpu_usage_measured_at = measure_sandbox_cpu_usage(sandbox)
         billed_cpu_usage_usec = measure_sandbox_billed_cpu_usage(sandbox)
 
-        try:
-            sandbox.destroy()
-            stream_completion_safe = True
-        except Exception as error:
-            logger.warning("cleanup_sandbox_destroy_failed", extra={"sandbox_id": input.sandbox_id}, exc_info=True)
-            cleanup_error = error
+        if input.retain_sandbox:
+            stream_completion_safe = cleanup_error is None
+        else:
+            try:
+                sandbox.destroy()
+                stream_completion_safe = True
+            except Exception as error:
+                logger.warning("cleanup_sandbox_destroy_failed", extra={"sandbox_id": input.sandbox_id}, exc_info=True)
+                cleanup_error = error
 
     # Costs after failed cleanup are platform overhead, not task costs.
     close_sandbox_session(
@@ -126,7 +172,7 @@ def cleanup_sandbox_now(input: CleanupSandboxInput) -> None:
     if cleanup_error is not None and strict_cleanup:
         raise cleanup_error
 
-    if run_id is not None and stream_completion_safe:
+    if run_id is not None and stream_completion_safe and not input.retain_sandbox:
         try:
             TaskRun.clear_sandbox_connection_state_atomic(run_id, input.sandbox_id)
         except TaskRun.DoesNotExist:
@@ -134,7 +180,7 @@ def cleanup_sandbox_now(input: CleanupSandboxInput) -> None:
 
     if input.complete_stream_on_cleanup and input.run_id and stream_completion_safe:
         try:
-            publish_run_stream_completion(input.run_id)
+            publish_run_stream_completion(input.run_id, stream_generation=input.stream_generation)
         except Exception:
             logger.warning("cleanup_sandbox_stream_completion_failed", extra={"run_id": input.run_id}, exc_info=True)
             raise
@@ -163,4 +209,4 @@ def cleanup_sandbox(input: CleanupSandboxInput) -> None:
 @asyncify
 def complete_run_stream(input: CompleteRunStreamInput) -> None:
     with log_activity_execution("complete_run_stream", run_id=input.run_id):
-        publish_run_stream_completion(input.run_id)
+        publish_run_stream_completion(input.run_id, stream_generation=input.stream_generation)

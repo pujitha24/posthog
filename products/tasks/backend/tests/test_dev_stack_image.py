@@ -63,7 +63,14 @@ def _make_fake_sandbox_cls(exit_code: int, publish_failures: int = 0):
             self.written_files[path] = payload
             return ExecutionResult(stdout="", stderr="", exit_code=0, error=None)
 
-        def execute_stream(self, command: str, timeout_seconds: int | None = None) -> _FakeStream:
+        def execute_stream(
+            self,
+            command: str,
+            timeout_seconds: int | None = None,
+            *,
+            isolated: bool = False,
+            buffer_stdout: bool = True,
+        ) -> _FakeStream:
             return _FakeStream(exit_code)
 
         def publish_filesystem_image(self, publish_name: str) -> str:

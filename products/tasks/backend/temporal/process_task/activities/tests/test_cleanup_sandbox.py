@@ -1,9 +1,11 @@
 import os
 import time
 import uuid
+import base64
 import threading
 from contextlib import nullcontext
 from datetime import timedelta
+from typing import IO
 
 import pytest
 from unittest.mock import patch
@@ -14,16 +16,25 @@ from django.utils import timezone
 from asgiref.sync import async_to_sync
 from pytest_mock import MockerFixture
 
-from products.tasks.backend.exceptions import SandboxNotFoundError
+from products.tasks.backend.exceptions import SandboxNotFoundError, SandboxNotRunningError
 from products.tasks.backend.facade.billing import get_task_run_cost
 from products.tasks.backend.logic.services.gateway_usage import record_gateway_routing
-from products.tasks.backend.logic.services.sandbox import Sandbox, SandboxConfig, SandboxTemplate
-from products.tasks.backend.logic.stream.redis_stream import TaskRunRedisStream, get_task_run_stream_key
+from products.tasks.backend.logic.services.sandbox import ExecutionResult, Sandbox, SandboxConfig, SandboxTemplate
+from products.tasks.backend.logic.services.sandbox_recovery import SandboxRecoveryArchive
+from products.tasks.backend.logic.stream.redis_stream import (
+    TaskRunRedisStream,
+    get_task_run_stream_completed_key,
+    get_task_run_stream_generation,
+    get_task_run_stream_key,
+    reset_task_run_stream,
+)
 from products.tasks.backend.models import SandboxSession, TaskRun
+from products.tasks.backend.redis import get_tasks_stream_redis_sync
 from products.tasks.backend.temporal.process_task.activities.cleanup_sandbox import (
     CleanupSandboxInput,
     cleanup_sandbox,
     cleanup_sandbox_now,
+    publish_run_stream_completion,
 )
 
 
@@ -105,6 +116,178 @@ def accounting_session(test_task_run):
         ttl_expires_at=now + timedelta(minutes=8),
         user_attributed_at=now - timedelta(minutes=2),
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "stop_outcome,state_error,resumed",
+    [
+        (0, None, False),
+        (0, None, True),
+        (1, None, False),
+        (RuntimeError("transport failed"), None, False),
+        (0, OperationalError("unavailable"), False),
+    ],
+)
+def test_retained_cleanup_preserves_recovery_state(
+    mocker: MockerFixture,
+    test_task_run: TaskRun,
+    stop_outcome: int | RuntimeError,
+    state_error: OperationalError | None,
+    resumed: bool,
+) -> None:
+    generation = get_task_run_stream_generation(str(test_task_run.id))
+    test_task_run.state = {
+        "sandbox_id": "sandbox-123",
+        "sandbox_url": "https://sandbox.example.com",
+        "sandbox_connect_token": "test-token",
+        "sandbox_jwt_kid": "test-key",
+        "sandbox_backend": "modal",
+        "snapshot_external_id": "im-previous",
+    }
+    test_task_run.save(update_fields=["state"])
+    sandbox = mocker.Mock(id="sandbox-123")
+    sandbox.read_cpu_usage_usec.return_value = None
+    sandbox.read_billed_cpu_usage_usec.return_value = None
+    if isinstance(stop_outcome, RuntimeError):
+        sandbox.stop_agent_server.side_effect = stop_outcome
+    else:
+        sandbox.stop_agent_server.return_value.exit_code = stop_outcome
+    mocker.patch.object(Sandbox, "get_by_id", return_value=sandbox)
+    if state_error:
+        mocker.patch.object(TaskRun, "update_state_atomic", side_effect=state_error)
+    mocker.patch("products.tasks.backend.temporal.process_task.activities.cleanup_sandbox.refresh_task_run_cost")
+    archive = mocker.patch(
+        "products.tasks.backend.temporal.process_task.activities.cleanup_sandbox.SandboxRecoveryArchive.create",
+        side_effect=lambda *args, **kwargs: reset_task_run_stream(str(test_task_run.id)) if resumed else None,
+    )
+    publish = mocker.patch(
+        "products.tasks.backend.temporal.process_task.activities.cleanup_sandbox.publish_run_stream_completion",
+        wraps=publish_run_stream_completion,
+    )
+
+    expected_error = type(state_error) if state_error else RuntimeError
+    with nullcontext() if stop_outcome == 0 and state_error is None else pytest.raises(expected_error):
+        cleanup_sandbox_now(
+            CleanupSandboxInput(
+                sandbox_id="sandbox-123",
+                run_id=str(test_task_run.id),
+                retain_sandbox=True,
+                complete_stream_on_cleanup=True,
+                stream_generation=generation,
+            )
+        )
+
+    sandbox.destroy.assert_not_called()
+    sandbox.stop_agent_server.assert_called_once_with()
+    test_task_run.refresh_from_db()
+    if state_error is None:
+        assert test_task_run.state["sandbox_retained_for_recovery"] == "sandbox-123"
+        for key in ("sandbox_id", "sandbox_url", "sandbox_connect_token", "sandbox_jwt_kid", "sandbox_backend"):
+            assert key not in test_task_run.state
+    assert test_task_run.state["snapshot_external_id"] == "im-previous"
+    assert publish.call_count == int(stop_outcome == 0 and state_error is None)
+    assert archive.call_count == int(stop_outcome == 0 and state_error is None)
+    completed = get_tasks_stream_redis_sync().exists(
+        get_task_run_stream_completed_key(get_task_run_stream_key(str(test_task_run.id)))
+    )
+    assert bool(completed) == (stop_outcome == 0 and state_error is None and not resumed)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("already_stopped", [False, True])
+def test_retained_cleanup_retries_export_but_accepts_expired_sandbox(
+    mocker: MockerFixture, test_task_run: TaskRun, already_stopped: bool
+) -> None:
+    sandbox = mocker.Mock(id="sandbox-123")
+    sandbox.stop_agent_server.return_value.exit_code = 0
+    sandbox.read_cpu_usage_usec.return_value = None
+    sandbox.read_billed_cpu_usage_usec.return_value = None
+    if already_stopped:
+        sandbox.stop_agent_server.side_effect = SandboxNotRunningError(
+            "Sandbox expired", {"sandbox_id": sandbox.id}, cause=RuntimeError("expired"), capture=False
+        )
+    mocker.patch.object(Sandbox, "get_by_id", return_value=sandbox)
+    archive = mocker.patch(
+        "products.tasks.backend.temporal.process_task.activities.cleanup_sandbox.SandboxRecoveryArchive.create",
+        side_effect=RuntimeError("upload failed"),
+    )
+    publish = mocker.patch(
+        "products.tasks.backend.temporal.process_task.activities.cleanup_sandbox.publish_run_stream_completion"
+    )
+    with nullcontext() if already_stopped else pytest.raises(RuntimeError, match="upload failed"):
+        cleanup_sandbox_now(
+            CleanupSandboxInput(
+                sandbox_id=sandbox.id,
+                run_id=str(test_task_run.id),
+                retain_sandbox=True,
+                complete_stream_on_cleanup=True,
+            )
+        )
+    sandbox.destroy.assert_not_called()
+    assert archive.call_count == int(not already_stopped)
+    assert publish.call_count == int(already_stopped)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("failure", [None, "partial", "archive", "download", "size", "upload"])
+def test_recovery_archive_is_published_only_after_verified_upload(
+    mocker: MockerFixture, test_task_run: TaskRun, failure: str | None
+) -> None:
+    test_task_run.state = {
+        "sandbox_retained_for_recovery": "sandbox-123",
+        "sandbox_recovery_archive_sandbox_id": "sandbox-old",
+    }
+    test_task_run.save(update_fields=["state"])
+    assert SandboxRecoveryArchive.download_url(test_task_run) is None
+    sandbox = mocker.Mock(id="sandbox-123")
+    payload = b"synthetic archive"
+    encoded = base64.b64encode(payload).decode()
+    sandbox.execute_stream.return_value.iter_stdout.return_value = iter([encoded[:3], encoded[3:8] + "\n", encoded[8:]])
+    if failure == "download":
+        sandbox.execute_stream.return_value.iter_stdout.side_effect = RuntimeError("download failed")
+    sandbox.execute_stream.return_value.wait.return_value = ExecutionResult(
+        stdout="", stderr="", exit_code=2 if failure == "archive" else int(failure == "partial")
+    )
+    uploaded: list[tuple[str, bytes]] = []
+
+    def upload(path: str, stream: IO[bytes], extras: dict[str, str]) -> None:
+        assert extras == {"Tagging": f"ttl_days=30&team_id={test_task_run.team_id}"}
+        if failure == "upload":
+            raise RuntimeError("upload failed")
+        uploaded.append((path, stream.read()))
+
+    mocker.patch("posthog.storage.object_storage.write_stream", side_effect=upload)
+    mocker.patch(
+        "posthog.storage.object_storage.head_object",
+        return_value={"ContentLength": 0 if failure == "size" else len(payload)},
+    )
+    success = failure in {None, "partial"}
+
+    with nullcontext() if success else pytest.raises(RuntimeError):
+        SandboxRecoveryArchive.create(test_task_run, sandbox)
+
+    test_task_run.refresh_from_db()
+    assert ((test_task_run.state or {}).get("sandbox_recovery_archive_sandbox_id") == sandbox.id) == success
+    assert sandbox.execute_stream.call_args.kwargs["isolated"]
+    assert sandbox.execute_stream.call_args.kwargs["buffer_stdout"] is False
+    if success:
+        assert uploaded == [(SandboxRecoveryArchive.storage_path(test_task_run, sandbox.id), payload)]
+        assert uploaded[0][0] != SandboxRecoveryArchive.storage_path(test_task_run, "sandbox-old")
+        assert (test_task_run.state or {})["sandbox_recovery_archive_partial"] == (failure == "partial")
+        sandbox.reset_mock()
+        SandboxRecoveryArchive.create(test_task_run, sandbox)
+        sandbox.execute_stream.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_recovery_archive_refuses_an_expired_retry(mocker: MockerFixture, test_task_run: TaskRun) -> None:
+    sandbox = mocker.Mock(id="sandbox-123")
+    upload = mocker.patch("posthog.storage.object_storage.write_stream")
+    with pytest.raises(RuntimeError, match="deadline expired"):
+        SandboxRecoveryArchive.create(test_task_run, sandbox, deadline=time.time() - 1)
+    upload.assert_not_called()
+    sandbox.execute_stream.assert_not_called()
 
 
 @pytest.mark.django_db

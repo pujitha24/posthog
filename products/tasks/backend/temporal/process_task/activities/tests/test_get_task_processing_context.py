@@ -301,6 +301,7 @@ class TestGetTaskProcessingContextActivity:
         assert isinstance(result, TaskProcessingContext)
         assert result.task_id == str(test_task.id)
         assert result.run_id == str(task_run.id)
+        assert result.stream_generation is not None
         assert result.team_id == test_task.team_id
         assert result.github_integration_id == test_task.github_integration_id
         assert result.repository == "posthog/posthog-js"

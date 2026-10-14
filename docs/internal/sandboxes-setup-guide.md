@@ -139,6 +139,33 @@ Codex's sessions and shell snapshots into that directory before starting a sessi
 Authentication and platform configuration stay outside these mappings. Pi restores
 its session history through the task-session API.
 
+Creating a resume snapshot preserves pending user messages until delivery handles
+them. If capture exceeds the file limit, it reports failure and retains the previous
+checkpoint without pruning the live workspace. Directory names such as `.cache` or
+`.venv` do not establish that their contents can be rebuilt. The legacy
+`allow_pruning` activity field remains readable but no longer enables deletion.
+On teardown capture failure, the agent is stopped and active connection credentials
+are cleared. The sandbox ID is recorded separately in `sandbox_retained_for_recovery`.
+A durable cleanup workflow destroys it after 15 minutes; an earlier provider expiry
+still applies. Cleanup transfers a workspace recovery archive through the backend
+before expiry, so sandbox egress rules do not need to allow object storage. Archive
+readiness belongs to that sandbox; a later failed checkpoint needs a new archive.
+Compression streams through the backend into object storage without staging the
+full archive on sandbox or worker disk. Export attempts share a 14-minute deadline, including queue time, and
+sandbox reads stop before expiry.
+Exhausted recovery retries report failure without restarting the completed task.
+The expiry workflow still destroys the retained sandbox.
+Stream completion is bound to the workflow's stream generation. A resume replaces
+that generation atomically with the stream reset, so late cleanup cannot close it.
+Once ready, the task owner can download it from
+`GET /api/projects/{project_id}/tasks/{task_id}/runs/{run_id}/recovery/` for 30 days.
+The endpoint requires task creator access and `task:write`; shared task visibility
+does not grant access. An expired sandbox or a failed archive upload cannot yield a
+download. The archive is for manual file recovery, not automatic session resume, and
+does not turn an older checkpoint into a current one. If files change during
+compression, the download is named `workspace-recovery-partial.tar.gz`: it can
+recover files but does not represent a consistent point in time.
+
 ## Running via the UI
 
 This is very minimal at the moment, but the tasks page can be used to see what

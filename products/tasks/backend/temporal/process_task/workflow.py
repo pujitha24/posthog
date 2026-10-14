@@ -152,6 +152,7 @@ from .activities.update_task_run_status import (
     update_task_run_status,
 )
 from .credential_refresh import CredentialRefreshExitReason, run_credential_refresh_loop, sandbox_gone_error_message
+from .expire_retained_sandbox import ExpireRetainedSandboxWorkflow
 from .slack_agent_design_relay import SlackAgentDesignRelayInput, SlackAgentDesignRelayWorkflow
 
 DEAD_SANDBOX_ERROR_TYPES = ("SandboxNotRunningError", "SandboxNotFoundError")
@@ -452,6 +453,7 @@ _PATCH_ID_BLOCK_ROTATION_ON_OPEN_TURN = "tasks-block-rotation-on-open-turn"
 _PATCH_ID_PRESERVE_COMPLETION_DURING_DELIVERY = "tasks-preserve-completion-during-delivery"
 
 _PATCH_ID_ROTATION_ACTIVITY_GUARD = "tasks-rotation-activity-guard"
+_PATCH_ID_RETAIN_FAILED_CHECKPOINT = "tasks-retain-failed-checkpoint"
 
 
 def _turn_opens_on_dispatch() -> bool:
@@ -476,6 +478,12 @@ def _rotation_activity_guard() -> bool:
     if not workflow.in_workflow():
         return True
     return workflow.patched(_PATCH_ID_ROTATION_ACTIVITY_GUARD)
+
+
+def _retain_failed_checkpoint() -> bool:
+    if not workflow.in_workflow():
+        return True
+    return workflow.patched(_PATCH_ID_RETAIN_FAILED_CHECKPOINT)
 
 
 # Keeps an interactive run alive when follow-up delivery exhausts retries, releasing
@@ -1829,24 +1837,39 @@ class ProcessTaskWorkflow(PostHogWorkflow):
 
                 cleanup_sandbox_id = sandbox_id or self._sandbox_id_for_cleanup
                 if cleanup_sandbox_id:
+                    snapshot_saved = True
                     if (
                         self._context
                         and self._context.mode == "interactive"
                         and self._context.use_modal_resume_snapshots
                     ):
-                        await self._create_resume_snapshot(
+                        snapshot_saved = await self._create_resume_snapshot(
                             cleanup_sandbox_id,
                             reason="teardown",
                             allow_pruning=True,
                         )
 
                     await self._read_sandbox_logs(cleanup_sandbox_id)
-                    await self._cleanup_sandbox(
-                        cleanup_sandbox_id,
-                        complete_stream=_defer_run_stream_completion(),
-                    )
-                    sandbox_cleaned = True
-                    self._sandbox_id_for_cleanup = None
+                    if _retain_failed_checkpoint() and not snapshot_saved:
+                        await self._emit_progress(
+                            step="resume_snapshot",
+                            status="failed",
+                            label="Session could not be saved",
+                            group="resume-snapshot",
+                            detail="Preparing a workspace recovery download. The sandbox expires within 15 minutes.",
+                        )
+                        await self._cleanup_sandbox(
+                            cleanup_sandbox_id,
+                            complete_stream=_defer_run_stream_completion(),
+                            retain_sandbox=True,
+                        )
+                    else:
+                        await self._cleanup_sandbox(
+                            cleanup_sandbox_id,
+                            complete_stream=_defer_run_stream_completion(),
+                        )
+                        sandbox_cleaned = True
+                        self._sandbox_id_for_cleanup = None
                 elif not run_stream_completed and (
                     (self._context is None or self._context.environment == "cloud") and _defer_run_stream_completion()
                 ):
@@ -2454,29 +2477,62 @@ class ProcessTaskWorkflow(PostHogWorkflow):
             pass
         raise _TaskCompletedDuringSandboxCreation
 
-    async def _cleanup_sandbox(self, sandbox_id: str, *, complete_stream: bool = False) -> None:
+    async def _cleanup_sandbox(
+        self, sandbox_id: str, *, complete_stream: bool = False, retain_sandbox: bool = False
+    ) -> None:
         context = self._context
         cleanup_input = CleanupSandboxInput(
             sandbox_id=sandbox_id,
             run_id=context.run_id if context else None,
             complete_stream_on_cleanup=bool(context and complete_stream),
+            retain_sandbox=retain_sandbox,
+            recovery_deadline=(workflow.now() + timedelta(minutes=14)).timestamp() if retain_sandbox else None,
+            stream_generation=context.stream_generation if context else None,
         )
+        if retain_sandbox:
+            await workflow.start_child_workflow(
+                ExpireRetainedSandboxWorkflow.run,
+                cleanup_input,
+                id=f"expire-retained-sandbox-{sandbox_id}",
+                parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+            )
         try:
             await workflow.execute_activity(
                 cleanup_sandbox,
                 cleanup_input,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=10 if retain_sandbox else 5),
+                schedule_to_close_timeout=timedelta(minutes=14) if retain_sandbox else None,
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
         except Exception:
+            if retain_sandbox:
+                workflow.logger.exception("sandbox_recovery_failed", extra={"sandbox_id": sandbox_id})
+                if context:
+                    await self._emit_progress(
+                        step="resume_snapshot",
+                        status="failed",
+                        label="Workspace recovery failed",
+                        group="resume-snapshot",
+                        detail="The recovery download is unavailable. The retained sandbox will still expire.",
+                    )
             if context and complete_stream and _complete_stream_after_cleanup_failure():
-                await self._complete_run_stream(context.run_id)
-            raise
+                try:
+                    await self._complete_run_stream(context.run_id)
+                except Exception:
+                    if not retain_sandbox:
+                        raise
+                    workflow.logger.exception(
+                        "sandbox_recovery_stream_completion_failed", extra={"run_id": context.run_id}
+                    )
+            if not retain_sandbox:
+                raise
 
     async def _complete_run_stream(self, run_id: str) -> None:
         await workflow.execute_activity(
             complete_run_stream,
-            CompleteRunStreamInput(run_id=run_id),
+            CompleteRunStreamInput(
+                run_id=run_id, stream_generation=self._context.stream_generation if self._context else None
+            ),
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )

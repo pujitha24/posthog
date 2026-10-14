@@ -63,11 +63,13 @@ from .process_task.activities.slack_agent_design import (
     start_slack_agent_design_stream,
     stop_slack_agent_design_stream,
 )
+from .process_task.expire_retained_sandbox import ExpireRetainedSandboxWorkflow
 from .process_task.slack_agent_design_relay import SlackAgentDesignRelayWorkflow
 from .process_task.workflow import ProcessTaskWorkflow
 from .slack_relay import PostHogCodeAgentRelayWorkflow, relay_slack_message
 
 WORKFLOWS = [
+    ExpireRetainedSandboxWorkflow,
     TaskRunGatewayUsageWorkflow,
     ProcessTaskWorkflow,
     SlackAgentDesignRelayWorkflow,

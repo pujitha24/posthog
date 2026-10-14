@@ -75,7 +75,9 @@ from products.tasks.backend.logic.services.sandbox_config import (
     MAX_SANDBOX_TTL_SECONDS,
 )
 from products.tasks.backend.logic.services.store_skills import resolve_store_skills
+from products.tasks.backend.logic.stream.redis_stream import get_task_run_stream_generation
 from products.tasks.backend.models import SandboxCustomImage, SandboxEnvironment, Task, TaskRun
+from products.tasks.backend.redis import run_uses_dedicated_stream
 from products.tasks.backend.temporal.constants import resolve_inactivity_timeout, resolve_max_run_duration
 from products.tasks.backend.temporal.oauth import is_interactive_signals_run
 from products.tasks.backend.temporal.observability import emit_agent_log, log_with_activity_context
@@ -122,6 +124,7 @@ class TaskProcessingContext:
     pr_babysit_enabled: bool = False
     context_layer_enabled: bool = False
     state: dict | None = None
+    stream_generation: str | None = None
     _branch: str | None = None
     sandbox_environment_name: str | None = None
     allowed_domains: list[str] | None = None
@@ -1691,6 +1694,7 @@ def get_task_processing_context(input: GetTaskProcessingContextInput) -> TaskPro
         pr_babysit_enabled=pr_babysit_enabled,
         context_layer_enabled=context_layer_enabled,
         state=state,
+        stream_generation=get_task_run_stream_generation(run_id, run_uses_dedicated_stream(state)),
         _branch=task_run.branch,
         sandbox_environment_name=sandbox_environment_name,
         allowed_domains=allowed_domains,

@@ -17717,6 +17717,91 @@ class TestSandboxCustomImageAPI(BaseTaskAPITest):
         mock_workflow.assert_called_once()
 
 
+class TestTaskRunRecoveryApiAccess(BaseTaskAPITest):
+    @parameterized.expand(["state", "state_remove_keys", "state_append"])
+    @patch("products.tasks.backend.models.TaskRun.publish_stream_state_event")
+    def test_recovery_state_is_server_owned(self, operation: str, _publish: MagicMock) -> None:
+        task = Task.objects.create(team=self.team, created_by=self.user, title="Recovery state")
+        original = {
+            "sandbox_retained_for_recovery": "sandbox-original",
+            "sandbox_recovery_archive_sandbox_id": "sandbox-original",
+            "sandbox_recovery_archive_partial": False,
+        }
+        run = TaskRun.objects.create(task=task, team=self.team, state=original)
+        value = list(original) if operation == "state_remove_keys" else {key: ["replacement"] for key in original}
+        response = self.client.patch(
+            f"/api/projects/@current/tasks/{task.id}/runs/{run.id}/", {operation: value}, format="json"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        run.refresh_from_db()
+        assert {key: (run.state or {}).get(key) for key in original} == original
+
+    @parameterized.expand(
+        [
+            ("owner", True, status.HTTP_302_FOUND),
+            ("owner", False, status.HTTP_404_NOT_FOUND),
+            ("read_key", True, status.HTTP_403_FORBIDDEN),
+            ("write_key", True, status.HTTP_302_FOUND),
+            ("teammate", True, status.HTTP_404_NOT_FOUND),
+            ("other_team", True, status.HTTP_404_NOT_FOUND),
+            ("anonymous", True, status.HTTP_401_UNAUTHORIZED),
+        ]
+    )
+    @patch("posthog.storage.object_storage.head_object", return_value={"ContentLength": 123})
+    @patch("posthog.storage.object_storage.get_presigned_url", return_value="https://example.com/recovery")
+    def test_recovery_download_requires_owner(
+        self, caller: str, ready: bool, expected_status: int, presign: MagicMock, head: MagicMock
+    ) -> None:
+        task = Task.objects.create(
+            team=self.team, created_by=self.user, title="Recovery test", origin_product=Task.OriginProduct.SLACK
+        )
+        run = TaskRun.objects.create(
+            task=task,
+            team=self.team,
+            status=TaskRun.Status.COMPLETED,
+            environment=TaskRun.Environment.CLOUD,
+            state={
+                "sandbox_retained_for_recovery": "sandbox-123",
+                "sandbox_recovery_archive_sandbox_id": "sandbox-123" if ready else None,
+            },
+        )
+        if caller in {"read_key", "write_key"}:
+            raw_key = generate_random_token_personal()
+            PersonalAPIKey.objects.create(
+                label="Recovery access",
+                user=self.user,
+                secure_value=hash_key_value(raw_key),
+                scopes=["task:read"] if caller == "read_key" else ["task:read", "task:write"],
+            )
+            self.client.logout()
+            self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {raw_key}")
+        elif caller == "teammate":
+            self.client.force_authenticate(self.create_organization_user("archive-reader"))
+        elif caller == "other_team":
+            other_team = Team.objects.create(organization=self.organization, name="Other project")
+            task.team = other_team
+            task.save(update_fields=["team"])
+            run.team = other_team
+            run.save(update_fields=["team"])
+        elif caller == "anonymous":
+            self.client.logout()
+
+        response = self.client.get(f"/api/projects/@current/tasks/{task.id}/runs/{run.id}/recovery/")
+
+        self.assertEqual(response.status_code, expected_status)
+        if expected_status == status.HTTP_302_FOUND:
+            self.assertEqual(response["Location"], "https://example.com/recovery")
+            self.assertEqual(response["Cache-Control"], "no-store")
+            presign.assert_called_once_with(
+                f"{run.get_artifact_s3_prefix()}/recovery/{hashlib.sha256(b'sandbox-123').hexdigest()}/workspace.tar.gz",
+                content_type="application/gzip",
+                content_disposition='attachment; filename="workspace-recovery.tar.gz"',
+            )
+        else:
+            head.assert_not_called()
+            presign.assert_not_called()
+
+
 class TestTaskRunSlackTaskApiAccess(BaseTaskAPITest):
     def _create_run(
         self,

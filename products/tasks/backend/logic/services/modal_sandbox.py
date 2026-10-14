@@ -27,6 +27,7 @@ from cachetools import TTLCache, cached
 from modal.exception import (
     ConnectionError as ModalConnectionError,
     InvalidError as ModalInvalidError,
+    NotFoundError as ModalNotFoundError,
     ResourceExhaustedError as ModalResourceExhaustedError,
     ServiceError as ModalServiceError,
     TimeoutError as ModalTimeoutError,
@@ -1358,12 +1359,14 @@ class ModalSandbox(AgentServerLaunchMixin):
 
             return ModalSandbox(sandbox=sb, config=config)
 
-        except Exception as e:
-            _raise_if_proxy_failure(e, sandbox_id, "lookup")
-            logger.exception(f"Failed to retrieve sandbox {sandbox_id}: {e}")
+        except ModalNotFoundError as e:
             raise SandboxNotFoundError(
                 f"Sandbox {sandbox_id} not found", {"sandbox_id": sandbox_id, "error": str(e)}, cause=e
             )
+        except Exception as e:
+            _raise_if_proxy_failure(e, sandbox_id, "lookup")
+            logger.exception(f"Failed to retrieve sandbox {sandbox_id}: {e}")
+            raise
 
     def get_status(self) -> SandboxStatus:
         if self._destroyed:
@@ -1461,11 +1464,19 @@ class ModalSandbox(AgentServerLaunchMixin):
         self,
         command: str,
         timeout_seconds: int | None = None,
+        *,
+        isolated: bool = False,
+        buffer_stdout: bool = True,
     ) -> ExecutionStream:
         redacted_command, timeout_seconds = self._prepare_command(command, timeout_seconds)
 
         try:
-            process = self._sandbox.exec("bash", "-c", command, timeout=timeout_seconds)
+            argv = (
+                ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "/bin/bash", "--noprofile", "--norc", "-c", command]
+                if isolated
+                else ["bash", "-c", command]
+            )
+            process = self._sandbox.exec(*argv, timeout=timeout_seconds)
         except Exception as e:
             self._raise_command_failure(e, redacted_command, timeout_seconds)
 
@@ -1481,13 +1492,17 @@ class ModalSandbox(AgentServerLaunchMixin):
                 try:
                     for line in self._process.stdout:
                         output = line.decode("utf-8") if isinstance(line, bytes) else line
-                        self._stdout_buffer.append(output)
+                        if buffer_stdout:
+                            self._stdout_buffer.append(output)
                         yield output
                 except Exception as e:
                     _raise_if_proxy_failure(e, self._sandbox_id, "exec")
                     raise
 
             def wait(self) -> ExecutionResult:
+                if not buffer_stdout and not self._stdout_iterated:
+                    for _ in self.iter_stdout():
+                        pass
                 try:
                     self._process.wait()
                     if not self._stdout_iterated:

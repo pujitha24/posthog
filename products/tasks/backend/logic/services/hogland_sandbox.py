@@ -172,15 +172,17 @@ def get_hogland_client() -> Hogland:
 class _HogboxExecutionStream:
     """Adapts the SDK's SSE exec stream to the ExecutionStream protocol."""
 
-    def __init__(self, events: Iterable[ExecEvent]):
+    def __init__(self, events: Iterable[ExecEvent], *, buffer_stdout: bool = True):
         self._events = iter(events)
+        self._buffer_stdout = buffer_stdout
         self._stdout_chunks: list[str] = []
         self._stderr_chunks: list[str] = []
         self._exit_code: int | None = None
 
     def _consume(self, event: ExecEvent) -> str | None:
         if event.kind == "stdout":
-            self._stdout_chunks.append(event.data)
+            if self._buffer_stdout:
+                self._stdout_chunks.append(event.data)
             return event.data
         if event.kind == "stderr":
             self._stderr_chunks.append(event.data)
@@ -389,7 +391,9 @@ class HoglandSandbox(AgentServerLaunchMixin):
 
         return ExecutionResult(stdout=result.stdout, stderr=result.stderr, exit_code=result.exit_code, error=None)
 
-    def execute_stream(self, command: str, timeout_seconds: int | None = None) -> ExecutionStream:
+    def execute_stream(
+        self, command: str, timeout_seconds: int | None = None, *, isolated: bool = False, buffer_stdout: bool = True
+    ) -> ExecutionStream:
         if not self.is_running():
             raise SandboxNotRunningError(
                 "Sandbox not in running state.",
@@ -400,8 +404,13 @@ class HoglandSandbox(AgentServerLaunchMixin):
         if timeout_seconds is None:
             timeout_seconds = self.config.default_execution_timeout_seconds
 
-        events = self._box.exec_stream(["bash", "-c", command], timeout_seconds=timeout_seconds)
-        return _HogboxExecutionStream(events)
+        argv = (
+            ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "/bin/bash", "--noprofile", "--norc", "-c", command]
+            if isolated
+            else ["bash", "-c", command]
+        )
+        events = self._box.exec_stream(argv, timeout_seconds=timeout_seconds)
+        return _HogboxExecutionStream(events, buffer_stdout=buffer_stdout)
 
     def write_file(self, path: str, payload: bytes, timeout_seconds: int | None = None) -> ExecutionResult:
         if not self.is_running():

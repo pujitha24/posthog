@@ -120,6 +120,7 @@ from products.tasks.backend.logic.services.network_policy import (
     normalize_requested_domains,
 )
 from products.tasks.backend.logic.services.sandbox import get_sandbox_class_for_sandbox_id, is_public_sandbox_repo
+from products.tasks.backend.logic.services.sandbox_recovery import SandboxRecoveryArchive
 from products.tasks.backend.logic.services.space_setup import (
     SPACE_SETUP_FEED_EVENT,
     SPACE_SETUP_MODEL,
@@ -302,6 +303,7 @@ __all__ = [
     "get_task_id_for_run",
     "get_task_run",
     "get_task_run_session",
+    "get_task_run_recovery_url",
     "sync_task_run_session",
     "get_task_run_detail",
     "get_task_run_source",
@@ -2734,6 +2736,9 @@ _PROTECTED_RUN_STATE_KEYS = frozenset(
         "sandbox_url",
         "sandbox_connect_token",
         "sandbox_jwt_kid",
+        "sandbox_retained_for_recovery",
+        "sandbox_recovery_archive_sandbox_id",
+        "sandbox_recovery_archive_partial",
         DEV_STACK_PREVIEW_STATE_KEY,
         "sandbox_cpu_cores",
         "sandbox_memory_gb",
@@ -3869,6 +3874,15 @@ def ensure_task_run_session(run_id: str | UUID) -> UUID:
         run.active_task_session = task_session
         run.save(update_fields=["active_task_session", "updated_at"])
         return task_session.id
+
+
+def get_task_run_recovery_url(
+    run_id: str | UUID, task_id: str | UUID, team_id: int, *, user_id: int | None
+) -> str | None:
+    run = _get_visible_run(run_id, task_id, team_id)
+    if run is None or user_id is None or run.task.created_by_id != user_id:
+        return None
+    return SandboxRecoveryArchive.download_url(run)
 
 
 def get_task_run_session(

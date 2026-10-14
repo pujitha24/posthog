@@ -1,9 +1,10 @@
+import io
 import shlex
 import subprocess
 from pathlib import Path
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from parameterized import parameterized
 
@@ -26,6 +27,19 @@ from products.tasks.backend.logic.services.sandbox import (
 def sandbox() -> DockerSandbox:
     config = SandboxConfig(name="test-sandbox")
     return DockerSandbox(container_id="c" * 64, config=config, host_port=8000)
+
+
+@pytest.mark.parametrize("buffer_stdout", [False, True])
+def test_execute_stream_can_leave_output_unbuffered(sandbox: DockerSandbox, buffer_stdout: bool) -> None:
+    process = MagicMock(returncode=0, stdout=io.StringIO("data\n"), stderr=io.StringIO(""))
+    with (
+        patch.object(sandbox, "is_running", return_value=True),
+        patch("subprocess.Popen", return_value=process) as start,
+    ):
+        stream = sandbox.execute_stream("command", isolated=True, buffer_stdout=buffer_stdout)
+        assert list(stream.iter_stdout()) == ["data\n"]
+        assert stream.wait().stdout == ("data\n" if buffer_stdout else "")
+    assert start.call_args.args[0][3:7] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "/bin/bash"]
 
 
 def _log_result() -> ExecutionResult:

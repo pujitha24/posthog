@@ -17,6 +17,7 @@ from products.tasks.backend.logic.stream.redis_stream import (
     TaskRunStreamSequenceGap,
     _stream_id_sort_key,
     get_task_run_stream_completed_key,
+    get_task_run_stream_generation,
     get_task_run_stream_key,
     get_task_run_stream_watched_key,
     publish_task_run_stream_complete,
@@ -252,10 +253,14 @@ def test_reset_task_run_stream_keeps_watched_lease() -> None:
     try:
         client.set(watched_key, "1", ex=TASK_RUN_STREAM_WATCHED_TIMEOUT)
         client.xadd(stream_key, {"data": "{}"})
+        generation = get_task_run_stream_generation(run_id)
 
         assert reset_task_run_stream(run_id)
+        assert get_task_run_stream_generation(run_id) != generation
+        assert publish_task_run_stream_complete(run_id, expected_generation=generation)
 
         assert not client.exists(stream_key)
+        assert not client.exists(get_task_run_stream_completed_key(stream_key))
         assert client.exists(watched_key)
     finally:
         client.delete(watched_key)

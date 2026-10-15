@@ -31,21 +31,30 @@ WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick'
 GROUP BY text ORDER BY clicks DESC
 LIMIT 1
 """
+QUALIFYING_PEOPLE = f"""
+SELECT person_id FROM events
+WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick' AND {RAGE_PATH} = {{path}}
+GROUP BY person_id HAVING count() >= {MIN_CLICKS_PER_PERSON}
+"""
+QUALIFYING_SESSIONS = f"""
+SELECT `$session_id` AS session_id, min(timestamp) AS first_rage FROM events
+WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick' AND `$session_id` != ''
+  AND {RAGE_PATH} = {{path}} AND person_id IN ({QUALIFYING_PEOPLE})
+GROUP BY session_id
+"""
 ERRORS_BEFORE_RAGE = f"""
 SELECT r.session_id AS session_id,
-       argMaxIf(x.issue, x.timestamp, x.timestamp >= r.first_rage - INTERVAL {ERROR_WINDOW_SECONDS} SECOND AND x.timestamp <= r.first_rage) AS issue,
-       countIf(x.timestamp >= r.first_rage - INTERVAL {ERROR_WINDOW_SECONDS} SECOND AND x.timestamp <= r.first_rage) AS errors_before
-FROM (
-    SELECT `$session_id` AS session_id, min(timestamp) AS first_rage FROM events
-    WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick' AND `$session_id` != ''
-      AND {RAGE_PATH} = {{path}}
-    GROUP BY session_id HAVING count() >= {MIN_CLICKS_PER_PERSON}
-) AS r
+       groupUniqArrayIf(
+           x.issue,
+           isNotNull(x.issue)
+           AND x.timestamp >= r.first_rage - INTERVAL {ERROR_WINDOW_SECONDS} SECOND
+           AND x.timestamp <= r.first_rage
+       ) AS issues
+FROM ({QUALIFYING_SESSIONS}) AS r
 LEFT JOIN (
     SELECT `$session_id` AS session_id, timestamp, toString(issue_id) AS issue FROM events
-    WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$exception' AND `$session_id` IN (
-        SELECT `$session_id` FROM events WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick'
-          AND {RAGE_PATH} = {{path}})
+    WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$exception'
+      AND `$session_id` IN (SELECT session_id FROM ({QUALIFYING_SESSIONS}))
 ) AS x ON x.session_id = r.session_id
 GROUP BY r.session_id
 LIMIT 10000
@@ -92,6 +101,6 @@ def find_top_rage_element(team: "Team", user: "User", path: str) -> str | None:
 
 def find_errors_before_rage(team: "Team", user: "User", path: str) -> ErrorsBeforeRage:
     rows = _rows(ERRORS_BEFORE_RAGE, team, user, "web_analytics_errors_before_rage", path)
-    issues = Counter(issue for _, issue, errors_before in rows if errors_before and issue)
+    issues = Counter(issue for _, session_issues in rows for issue in session_issues)
     issue_id, issue_sessions = issues.most_common(1)[0] if issues else (None, 0)
     return ErrorsBeforeRage(sessions=len(rows), issue_id=issue_id, issue_sessions=issue_sessions)

@@ -16,7 +16,7 @@ from products.today.backend.logic.highlight_types import Context
 from products.web_analytics.backend.facade.rage_pages import ErrorsBeforeRage, RagePage
 
 ISSUE_ID = uuid.UUID("01890000-0000-7000-8000-000000000002")
-PAGE = RagePage(path="/project/1/checkout/…", people=12, clicks=340)
+PAGE = RagePage(path="/checkout/…", people=12, clicks=340)
 ELEMENT_ITEM = (
     "12 users rage-clicked on /checkout/… in the last 7 days",
     "340 rage clicks · Top element: ‘Pay now’",
@@ -37,7 +37,7 @@ class TestRage(SimpleTestCase):
                 True,
                 PAGE,
                 "Pay now",
-                ErrorsBeforeRage(4, str(ISSUE_ID), 2),
+                ErrorsBeforeRage(6, str(ISSUE_ID), 3),
                 True,
                 [ERROR_ITEM],
             ),
@@ -46,7 +46,7 @@ class TestRage(SimpleTestCase):
                 True,
                 PAGE,
                 "Pay now",
-                ErrorsBeforeRage(4, str(ISSUE_ID), 1),
+                ErrorsBeforeRage(3, str(ISSUE_ID), 2),
                 True,
                 [ELEMENT_ITEM],
             ),
@@ -55,7 +55,7 @@ class TestRage(SimpleTestCase):
                 True,
                 PAGE,
                 "Pay now",
-                ErrorsBeforeRage(4, str(ISSUE_ID), 2),
+                ErrorsBeforeRage(6, str(ISSUE_ID), 3),
                 False,
                 [ELEMENT_ITEM],
             ),

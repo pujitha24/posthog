@@ -1,5 +1,3 @@
-import re
-
 from posthog.dataclasses import frozen
 
 from products.error_tracking.backend.facade.api import get_issue_basics
@@ -40,7 +38,7 @@ def find(context: Context) -> Found:
     page = facts.page
     if page is None:
         return Found()
-    title = RAGE_PAGE.format(people=users(page.people), page=(re.sub(r"^/project/[^/]+", "", page.path) or "/")[:40])
+    title = RAGE_PAGE.format(people=users(page.people), page=(page.path or "/")[:40])
     error = _error_item(context, page, facts.errors, title) if context.allows("error_tracking:read") else None
     if error is not None:
         return Found(items=(error,))
@@ -81,7 +79,7 @@ def _rage_facts(context: Context) -> RageFacts:
 
 def _error_item(context: Context, page: RagePage, errors: ErrorsBeforeRage, title: str) -> Candidate | None:
     share = errors.issue_sessions / errors.sessions if errors.sessions else 0
-    if errors.issue_id is None or errors.sessions < MIN_ERROR_SESSIONS or share < MIN_ERROR_SHARE:
+    if errors.issue_id is None or errors.issue_sessions < MIN_ERROR_SESSIONS or share < MIN_ERROR_SHARE:
         return None
     issue = get_issue_basics(context.team.id, errors.issue_id)
     if issue is None:

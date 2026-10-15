@@ -1,5 +1,6 @@
 import { MakeLogicType, actions, afterMount, connect, kea, key, listeners, path, props, reducers, selectors } from 'kea'
 import { loaders } from 'kea-loaders'
+import { router } from 'kea-router'
 import posthog from 'posthog-js'
 
 import api from 'lib/api'
@@ -11,7 +12,12 @@ import { urls } from 'scenes/urls'
 
 import { businessKnowledgeRepositoriesFileRetrieve } from 'products/business_knowledge/frontend/generated/api'
 import type { RepositoryFileApi } from 'products/business_knowledge/frontend/generated/api.schemas'
-import { captureInboxReportAction, discussQuestionProperties } from 'products/signals/frontend/inbox/inboxAnalytics'
+import {
+    captureInboxReportAction,
+    captureTodayReportOpened,
+    discussQuestionProperties,
+    parseInboxReportLinkSource,
+} from 'products/signals/frontend/inbox/inboxAnalytics'
 import { inboxTaskKickoffLogic } from 'products/signals/frontend/inbox/inboxTaskKickoffLogic'
 import { SignalReport } from 'products/signals/frontend/inbox/types'
 import {
@@ -39,7 +45,13 @@ import { reportItemState } from './todayBriefingItems'
 import { type TodaySignalDestination } from './todayEvidence'
 import { type TodayMarkedFigure, markedFigures, staleEvidenceDate } from './todayFigureSources'
 import { TodayImpactNumber, impactNumbers } from './todayImpact'
-import { type TodayAskSource, todayLogic } from './todayLogic'
+import {
+    type TodayAskSource,
+    type TodayReportOpenContext,
+    reportIdFromPath,
+    signalReportSnapshot,
+    todayLogic,
+} from './todayLogic'
 import { reportWorkKind, reportWorkPrompt } from './todayNextStep'
 import { TodayCodeQuote, codeIdentifiers, findCodeQuote } from './todayQuotedCode'
 import { findSampleReport, isSampleReportId } from './todaySampleReports'
@@ -64,6 +76,7 @@ export interface todayReportLogicValues {
     currentProjectId: number | string // teamLogic
     currentTeamId: number | null // teamLogic
     askingAi: boolean // todayLogic
+    reportOpenContext: TodayReportOpenContext | null // todayLogic
     reports: SignalReport[] // todayLogic
     reportStateOverrides: Record<string, BriefingItemStateEnumApi> // todayVerdictLogic
     asksJev: boolean
@@ -135,6 +148,9 @@ export interface todayReportLogicActions {
         prompt: string
         report: SignalReport | undefined
         source: TodayAskSource
+    } // todayLogic
+    setReportOpenContext: (context: TodayReportOpenContext | null) => {
+        context: TodayReportOpenContext | null
     } // todayLogic
     askAboutReport: (question: string) => {
         question: string
@@ -293,7 +309,7 @@ export const todayReportLogic = kea<todayReportLogicType>([
             teamLogic,
             ['currentTeamId', 'currentProjectId'],
             todayLogic,
-            ['reports', 'askingAi'],
+            ['reports', 'askingAi', 'reportOpenContext'],
             todayVerdictLogic,
             ['reportStateOverrides'],
             featureFlagLogic,
@@ -301,7 +317,7 @@ export const todayReportLogic = kea<todayReportLogicType>([
         ],
         actions: [
             todayLogic,
-            ['askAi'],
+            ['askAi', 'setReportOpenContext'],
             inboxTaskKickoffLogic,
             ['createPrFromReport', 'discussReport', 'openReportDiscussion'],
         ],
@@ -523,7 +539,23 @@ export const todayReportLogic = kea<todayReportLogicType>([
             return cache.fileReads.get(key)
         }
         return {
-            loadFullReportSuccess: () => actions.loadKeyClauses(),
+            loadFullReportSuccess: ({ fullReport }) => {
+                actions.loadKeyClauses()
+                const open = cache.pendingOpen
+                cache.pendingOpen = null
+                if (open && !values.isSample) {
+                    const context: TodayReportOpenContext | null = open.context
+                    captureTodayReportOpened({
+                        report: signalReportSnapshot(fullReport),
+                        openMethod: context ? 'click' : 'deeplink',
+                        linkSource: open.linkSource,
+                        list: context?.list ?? null,
+                        rank: context?.rank ?? null,
+                        listSize: context?.listSize ?? null,
+                        source: context?.source ?? null,
+                    })
+                }
+            },
             loadPageSuccess: () => {
                 actions.loadKeyClauses()
                 actions.loadFigureMarks()
@@ -616,7 +648,24 @@ export const todayReportLogic = kea<todayReportLogicType>([
             },
         }
     }),
-    afterMount(({ actions }) => {
+    afterMount(({ actions, values, props, cache }) => {
+        // The logic mounts once per visit, so it sends one open. A visit with no click on Today is a deep-link:
+        // a shared URL, a PostHog AI link, a refresh, or back / forward.
+        const context = values.reportOpenContext
+        const { pathname } = router.values.location
+        const { link_source: linkSource, ...searchParams } = router.values.searchParams
+        const onReportPage = reportIdFromPath(pathname) === props.reportId
+        cache.pendingOpen = {
+            context: context?.reportId === props.reportId ? context : null,
+            linkSource: onReportPage ? parseInboxReportLinkSource(linkSource) : null,
+        }
+        if (context) {
+            actions.setReportOpenContext(null)
+        }
+        if (onReportPage && linkSource !== undefined) {
+            // A copied address bar must not pass the original `link_source` on to the next reader.
+            router.actions.replace(pathname, searchParams, router.values.hashParams)
+        }
         actions.loadFullReport()
         actions.loadPage()
     }),

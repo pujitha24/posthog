@@ -80,12 +80,15 @@ describe('todayLogic', () => {
         {
             shown: 'the briefing',
             hasBriefing: true,
-            expected: ['briefing id: `briefing-1`', '](http://localhost/project/997/home/reports/a)'],
+            expected: ['briefing id: `briefing-1`', '](http://localhost/project/997/home/reports/a?link_source=today)'],
         },
         {
             shown: 'the report list',
             hasBriefing: false,
-            expected: ['briefing is not written yet', '](http://localhost/project/997/home/reports/r-1)'],
+            expected: [
+                'briefing is not written yet',
+                '](http://localhost/project/997/home/reports/r-1?link_source=today)',
+            ],
         },
         {
             shown: 'the open report',
@@ -204,7 +207,11 @@ describe('todayLogic', () => {
         logic.actions.loadPersonalBriefing()
         await expectLogic(logic).toFinishAllListeners()
 
+        reportResponse = [200, makeReport({ id: 'a' })]
         logic.actions.itemOpened(logic.values.briefingItems[0])
+        const reportLogic = todayReportLogic({ reportId: 'a' })
+        reportLogic.mount()
+        await expectLogic(reportLogic).toDispatchActions(['loadFullReportSuccess'])
         todayVerdictLogic.actions.setReportVerdict(
             { reportId: 'a', title: 'Signup form rejects emails', hasOpenPullRequest: false },
             'dismiss',
@@ -227,7 +234,13 @@ describe('todayLogic', () => {
                 ],
                 [
                     'Inbox report opened',
-                    expect.objectContaining({ report_id: 'a', surface: 'today', list: 'briefing', rank: 1 }),
+                    expect.objectContaining({
+                        report_id: 'a',
+                        surface: 'today',
+                        open_method: 'click',
+                        list: 'briefing',
+                        rank: 1,
+                    }),
                     undefined,
                 ],
                 [
@@ -247,7 +260,11 @@ describe('todayLogic', () => {
         logic.mount()
         await expectLogic(logic).toFinishAllListeners()
 
+        reportResponse = [200, b]
         logic.actions.reportOpened(b, 'list')
+        const reportLogic = todayReportLogic({ reportId: 'b' })
+        reportLogic.mount()
+        await expectLogic(reportLogic).toDispatchActions(['loadFullReportSuccess'])
 
         const events = capture.mock.calls.filter(([event]) => event.startsWith('Inbox '))
         expect(events).toEqual([
@@ -279,6 +296,19 @@ describe('todayLogic', () => {
 
         expect(capture.mock.calls.filter(([event]) => event === 'today report previewed')).toEqual([
             ['today report previewed', expect.objectContaining({ list: 'personal', report_id: 'a', surface: 'list' })],
+        ])
+        expect(capture.mock.calls.filter(([event]) => event === 'Inbox report action')).toEqual([
+            [
+                'Inbox report action',
+                expect.objectContaining({
+                    report_id: 'a',
+                    action_type: 'expand_preview',
+                    surface: 'today',
+                    list: 'briefing',
+                    rank: 1,
+                }),
+                undefined,
+            ],
         ])
     })
 

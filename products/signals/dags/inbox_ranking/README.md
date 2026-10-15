@@ -251,6 +251,14 @@ Self-driving's own `task` and `system` writes do not count: they are internal op
 A resolve without a reason is the automatic resolve after a tracked PR merges, so it does not count either.
 
 The Today home sends the same client events as the Inbox, with `surface: 'today'` and a `list` property (`briefing` or `sidebar_more`) on impressions and opens.
+The Today report page sends `Inbox report opened` once per visit, when the report loads.
+A click on a list row sends `open_method: 'click'` with the row's `list`, `rank` and `list_size`, and `source` (`list` or `more`).
+The previous / next control sends `source: 'step'`, with the position in the report queue as `rank` and the queue length as `list_size`, and no `list`.
+Every other visit (a shared URL, a PostHog AI link, a refresh, back / forward) sends `open_method: 'deeplink'` with a null `list`, `rank` and `list_size`.
+`link_source` comes from the URL, and PostHog AI writes `link_source=today` on the Today report links it shows.
+A list row opened in place sends `Inbox report action` with `action_type: 'expand_preview'`, `list` and `rank`.
+No head reads `expand_preview`, and it is not in `ACTION_TYPES`.
+Sample reports send no `Inbox` events.
 Filter on `surface` where a metric must stay Inbox-only.
 Today sets a verdict first and sends its optional reason in a second state call, which does not change the status.
 For that call the server emits `signal_report_status_changed` with `previous_status` equal to `status` and `reason_added: true`, so the reason reaches the status-stream heads.

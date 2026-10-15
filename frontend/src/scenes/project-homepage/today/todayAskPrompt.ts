@@ -5,9 +5,9 @@ import {
     REPORT_DISCUSSION_STATE_INSTRUCTIONS,
 } from 'products/signals/frontend/inbox/inboxTaskKickoffLogic'
 import { SignalReport } from 'products/signals/frontend/inbox/types'
-import type { BriefingApi } from 'products/today/frontend/generated/api.schemas'
+import type { BriefingApi, BriefingItemApi } from 'products/today/frontend/generated/api.schemas'
 
-import { isExternalHref, itemHref } from './todayBriefingItems'
+import { isExternalHref, itemHref, itemReportId } from './todayBriefingItems'
 
 export const WALK_THROUGH_QUESTION = 'Walk me through my Today briefing and tell me what to do first.'
 
@@ -27,13 +27,24 @@ function absoluteHref(href: string): string {
     return urls.absolute(href.startsWith('/project/') ? href : urls.currentProject(href))
 }
 
+// `link_source` tells the report page that a PostHog AI answer wrote the link.
+function todayReportHref(reportId: string): string {
+    return `${urls.todayReport(reportId)}?link_source=today`
+}
+
+function briefingItemHref(item: BriefingItemApi): string {
+    const reportId = itemReportId(item)
+    return reportId ? todayReportHref(reportId) : itemHref(item)
+}
+
 function markdownLink(text: string, href: string): string {
     return `[${text.replace(/[[\]]/g, '\\$&')}](${absoluteHref(href)})`
 }
 
 function briefingContext(briefing: BriefingApi): string[] {
     const items = briefing.items.map(
-        (item) => `${item.rank}. ${markdownLink(item.label, itemHref(item))} (${item.signal}; state: ${item.state})`
+        (item) =>
+            `${item.rank}. ${markdownLink(item.label, briefingItemHref(item))} (${item.signal}; state: ${item.state})`
     )
     return [
         `- Briefing id: \`${briefing.id}\`, for ${briefing.local_day}`,
@@ -46,8 +57,8 @@ function briefingContext(briefing: BriefingApi): string[] {
         '',
         `Use the \`today-briefing-get\` tool to read this briefing and check that its id is \`${briefing.id}\`. ` +
             'If the id is different, a newer briefing replaced it: tell me, and use the newer one. ' +
-            'Use `today-candidates-list` for the facts behind each item. A report link ends with the report id: use it ' +
-            'with `inbox-reports-retrieve` to read the report in full before you follow up on it.',
+            'Use `today-candidates-list` for the facts behind each item. The last part of a report link path is the ' +
+            'report id: use it with `inbox-reports-retrieve` to read the report in full before you follow up on it.',
     ]
 }
 
@@ -56,11 +67,11 @@ function reportsContext(reports: SignalReport[]): string[] {
         '- My briefing is not written yet. The page shows these reports, most urgent first:',
         ...reports.map(
             (report, index) =>
-                `  ${index + 1}. ${markdownLink(report.title ?? 'Untitled report', urls.todayReport(report.id))}` +
+                `  ${index + 1}. ${markdownLink(report.title ?? 'Untitled report', todayReportHref(report.id))}` +
                 (report.priority ? ` (${report.priority})` : '')
         ),
         '',
-        'Each link ends with the report id. Use it with `inbox-reports-retrieve` to read the report in full before you ' +
+        'The last part of each link path is the report id. Use it with `inbox-reports-retrieve` to read the report in full before you ' +
             'follow up on it.',
     ]
 }

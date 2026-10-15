@@ -1,4 +1,6 @@
+import { router } from 'kea-router'
 import { expectLogic } from 'kea-test-utils'
+import posthog from 'posthog-js'
 
 import { FEATURE_FLAGS } from 'lib/constants'
 import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
@@ -12,6 +14,7 @@ import { SignalReport, SignalReportStatus } from 'products/signals/frontend/inbo
 import type { ReportPageApi } from 'products/today/frontend/generated/api.schemas'
 
 import { todayReportLogic } from './todayReportLogic'
+import { todayReportQueueLogic } from './todayReportQueueLogic'
 
 const PAGE: ReportPageApi = {
     lead: 'Checkout fails for Safari users.',
@@ -26,6 +29,81 @@ const PAGE: ReportPageApi = {
 }
 
 describe('todayReportLogic', () => {
+    afterEach(() => {
+        jest.restoreAllMocks()
+    })
+
+    test.each([
+        [
+            'a direct page load as a deep-link with its link source',
+            '/project/997/home/reports/b?link_source=today',
+            false,
+            'b',
+            [
+                expect.objectContaining({
+                    report_id: 'b',
+                    surface: 'today',
+                    open_method: 'deeplink',
+                    link_source: 'today',
+                    list: null,
+                    rank: null,
+                    list_size: null,
+                }),
+            ],
+        ],
+        [
+            'a step from the previous report with its queue position',
+            '/project/997/home/reports/a',
+            true,
+            'b',
+            [
+                expect.objectContaining({
+                    report_id: 'b',
+                    surface: 'today',
+                    open_method: 'click',
+                    source: 'step',
+                    rank: 2,
+                    list_size: 2,
+                }),
+            ],
+        ],
+        ['no open for a sample report', '/project/997/home/reports/sample-pr', false, 'sample-pr', []],
+    ])('sends %s', async (_, path, step, reportId, opens) => {
+        useMocks({
+            get: {
+                '/api/projects/:team_id/signals/reports/for_you/': {
+                    results: [makeReport({ id: 'a' }), makeReport({ id: 'b' })],
+                    count: 2,
+                },
+                '/api/projects/:team_id/signals/reports/:id/': ({ params }) => [
+                    200,
+                    makeReport({ id: params.id as string }),
+                ],
+                '/api/projects/:team_id/today/reports/:id/page/': () => [200, PAGE],
+                '/api/projects/:team_id/today/briefing/': () => [404, {}],
+            },
+        })
+        initKeaTests()
+        const capture = jest.spyOn(posthog, 'capture')
+        const queueLogic = todayReportQueueLogic()
+        queueLogic.mount()
+        router.actions.push(path)
+        await expectLogic(queueLogic).toFinishAllListeners()
+        if (step) {
+            queueLogic.actions.openAdjacentReport(1)
+        }
+
+        const logic = todayReportLogic({ reportId })
+        logic.mount()
+        await expectLogic(logic).toDispatchActions(['loadFullReportSuccess']).toFinishAllListeners()
+
+        expect(
+            capture.mock.calls.filter(([event]) => event === 'Inbox report opened').map(([, props]) => props)
+        ).toEqual(opens)
+        // A copied address bar must not carry the link source to the next reader.
+        expect(router.values.searchParams.link_source).toBeUndefined()
+    })
+
     test.each([
         [
             'implements a report that is ready to act on',

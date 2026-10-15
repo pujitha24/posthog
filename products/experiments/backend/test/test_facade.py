@@ -17,7 +17,7 @@ from posthog.models.team import Team
 from posthog.test.persons import create_person
 
 from products.experiments.backend.facade import api, count_running_experiments_on_feature_flag_called, create_experiment
-from products.experiments.backend.facade.contracts import CreateExperimentInput, EndedExperiment, RunningExperiment
+from products.experiments.backend.facade.contracts import CreateExperimentInput, EndedExperiment
 from products.experiments.backend.models.experiment import Experiment
 from products.feature_flags.backend.facade.enums import FlagEvaluationsMode
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
@@ -230,21 +230,29 @@ class TestHighlightFacts(BaseTest):
             self.team.pk, self.user.pk, since=now - timedelta(days=7), limit=20
         ) == [EndedExperiment(id=listed.id, name="Pricing page layout", ended_at=ended_at)]
 
-    def test_lists_running_experiments_started_before_the_cutoff(self) -> None:
+    @parameterized.expand(
+        [("any start", None, ["Checkout copy", "Onboarding tips"]), ("a recent start", 67, ["Checkout copy"])]
+    )
+    def test_lists_running_experiments_that_started_in_the_window(
+        self, _name: str, started_after_days: int | None, expected: list[str]
+    ) -> None:
         now = timezone.now()
-        started_at = now - timedelta(days=80)
-        listed = self._experiment("Onboarding tips", start_date=started_at)
+        old = self._experiment("Onboarding tips", start_date=now - timedelta(days=80))
+        recent = self._experiment("Checkout copy", start_date=now - timedelta(days=62))
         self._experiment("Started recently", start_date=now - timedelta(days=10))
         self._experiment("Draft")
         self._experiment("Ended", start_date=now - timedelta(days=80), end_date=now - timedelta(days=1))
 
-        assert api.list_running_experiments(
-            self.team.pk, self.user.pk, started_before=now - timedelta(days=60), limit=20
-        ) == [
-            RunningExperiment(
-                id=listed.id, name="Onboarding tips", started_at=started_at, flag_key=listed.feature_flag.key
-            )
-        ]
+        found = api.list_running_experiments(
+            self.team.pk,
+            self.user.pk,
+            started_after=None if started_after_days is None else now - timedelta(days=started_after_days),
+            started_before=now - timedelta(days=60),
+            limit=20,
+        )
+
+        assert [e.name for e in found] == expected
+        assert {e.flag_key for e in found} <= {old.feature_flag.key, recent.feature_flag.key}
 
 
 class TestCountEnrolledPeople(ClickhouseTestMixin, BaseTest):

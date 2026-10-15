@@ -163,20 +163,18 @@ def list_ended_experiments_without_conclusion(
 
 
 def list_running_experiments(
-    team_id: int, user_id: int, *, started_before: datetime, limit: int
+    team_id: int, user_id: int, *, started_after: datetime | None, started_before: datetime, limit: int
 ) -> list[RunningExperiment]:
-    rows = (
-        ExperimentModel.objects.filter(
-            team_id=team_id,
-            created_by_id=user_id,
-            start_date__lte=started_before,
-            end_date__isnull=True,
-            archived=False,
-        )
-        .exclude(deleted=True)
-        .order_by("start_date")
-        .values_list("id", "name", "start_date", "feature_flag__key")[:limit]
-    )
+    experiments = ExperimentModel.objects.filter(
+        team_id=team_id,
+        created_by_id=user_id,
+        start_date__lte=started_before,
+        end_date__isnull=True,
+        archived=False,
+    ).exclude(deleted=True)
+    if started_after is not None:
+        experiments = experiments.filter(start_date__gt=started_after)
+    rows = experiments.order_by("-start_date").values_list("id", "name", "start_date", "feature_flag__key")[:limit]
     return [
         RunningExperiment(id=id, name=name, started_at=started_at, flag_key=flag_key)
         for id, name, started_at, flag_key in rows

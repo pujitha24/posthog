@@ -1,4 +1,5 @@
 from posthog.hogql import ast
+from posthog.hogql.constants import HogQLGlobalSettings
 from posthog.hogql.query import execute_hogql_query
 
 from posthog.models.team import Team
@@ -7,6 +8,7 @@ from posthog.models.user import User
 from products.feature_flags.backend.facade.enums import FlagEvaluationsMode
 from products.feature_flags.backend.facade.flags import get_flag_evaluations_read_mode
 
+QUERY_TIMEOUT_SECONDS = 10
 WINDOW = "timestamp >= toStartOfDay(now()) - INTERVAL 14 DAY AND timestamp < toStartOfDay(now())"
 ENROLLED_FROM_EVENTS = f"""
 SELECT properties.$feature_flag AS flag_key, uniq(person_id) AS people
@@ -34,5 +36,6 @@ def enrolled_people_by_flag(team: Team, user: User, flag_keys: list[str]) -> dic
         query_type="experiments_enrolled_people_by_flag",
         placeholders={"flag_keys": ast.Tuple(exprs=[ast.Constant(value=key) for key in flag_keys])},
         user=user,
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
     )
     return dict(result.results or [])

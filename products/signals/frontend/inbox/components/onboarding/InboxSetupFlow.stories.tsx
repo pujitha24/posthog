@@ -68,7 +68,7 @@ const meta: Meta<typeof InboxSetupFlow> = {
     component: InboxSetupFlow,
     parameters: {
         mockDate: '2026-10-14',
-        featureFlags: { [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'test', [FEATURE_FLAGS.INBOX_REDESIGN]: true },
+        featureFlags: { [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'test-ui', [FEATURE_FLAGS.INBOX_REDESIGN]: true },
     },
     decorators: [
         (Story) => (
@@ -97,7 +97,7 @@ const meta: Meta<typeof InboxSetupFlow> = {
                         deprecatedVersions: [],
                     },
                 },
-                '/api/projects/:id/signals/onboarding/': { draft, completed_at: null, variant: 'test' },
+                '/api/projects/:id/signals/onboarding/': { draft, completed_at: null, variant: 'test-ui' },
                 '/api/projects/:id/signals/source_configs/': { results: [], next: null, count: 0 },
                 '/api/projects/:id/event_definitions/': {
                     results: [{ name: '$exception', last_seen_at: '2026-01-01T00:00:00Z' }],
@@ -133,7 +133,7 @@ const meta: Meta<typeof InboxSetupFlow> = {
                 '/api/projects/:id/signals/scout/configs/sync/': [],
                 '/api/projects/:id/signals/onboarding/': async ({ request }) => [
                     200,
-                    { draft: await request.json(), completed_at: null, variant: 'test' },
+                    { draft: await request.json(), completed_at: null, variant: 'test-ui' },
                 ],
             },
         }),
@@ -161,14 +161,14 @@ export const Scouts: Story = {
                 '/api/projects/:id/signals/onboarding/': {
                     draft: { ...draft, step: 'scouts' },
                     completed_at: null,
-                    variant: 'test',
+                    variant: 'test-ui',
                 },
             },
             post: {
                 '/api/projects/:id/signals/onboarding/expose/': {
                     draft: { ...draft, step: 'scouts' },
                     completed_at: null,
-                    variant: 'test',
+                    variant: 'test-ui',
                 },
             },
         }),
@@ -181,7 +181,7 @@ export const Github: Story = {
                 '/api/projects/:id/signals/onboarding/': {
                     draft: { ...draft, step: 'github' },
                     completed_at: null,
-                    variant: 'test',
+                    variant: 'test-ui',
                 },
             },
         }),
@@ -193,7 +193,7 @@ export const NoProductsEnabled: Story = {
         projectMocks(false),
         mswDecorator({
             get: {
-                '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'test' },
+                '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'test-ui' },
                 '/api/projects/:id/event_definitions/': { results: [], next: null, count: 0 },
                 '/api/projects/:id/vision/scanners/': { results: [], next: null, count: 0 },
                 '/api/projects/:id/signals/scout/configs/': [
@@ -220,7 +220,7 @@ export const BuiltInScouts: Story = {
                 '/api/projects/:id/signals/onboarding/': {
                     draft: { ...draft, step: 'scouts' },
                     completed_at: null,
-                    variant: 'test',
+                    variant: 'test-ui',
                 },
                 '/api/projects/:id/signals/scout/suggestions/': mockScoutSuggestionSet({
                     status: 'low_activity',
@@ -257,7 +257,7 @@ export const GithubAlreadyConnected: Story = {
                 '/api/projects/:id/signals/onboarding/': {
                     draft: { ...draft, step: 'github' },
                     completed_at: null,
-                    variant: 'test',
+                    variant: 'test-ui',
                 },
                 '/api/projects/:id/integrations/': {
                     results: [
@@ -291,7 +291,7 @@ export const GithubAccessRequired: Story = {
                 '/api/projects/:id/signals/onboarding/': {
                     draft: { ...draft, step: 'github' },
                     completed_at: null,
-                    variant: 'test',
+                    variant: 'test-ui',
                 },
             },
             post: { '/api/projects/:id/integrations/request_access/': {} },
@@ -303,9 +303,9 @@ export const TreatmentEntry = {
     render: () => <InboxOnboardingEntry />,
     decorators: [
         mswDecorator({
-            get: { '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'test' } },
+            get: { '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'test-ui' } },
             post: {
-                '/api/projects/:id/signals/onboarding/expose/': { draft: null, completed_at: null, variant: 'test' },
+                '/api/projects/:id/signals/onboarding/expose/': { draft: null, completed_at: null, variant: 'test-ui' },
             },
         }),
     ],
@@ -368,13 +368,13 @@ const quickGeneralScout = {
 
 export const QuickEntry: Story = {
     parameters: {
-        featureFlags: { [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'quick', [FEATURE_FLAGS.INBOX_REDESIGN]: true },
+        featureFlags: { [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'test-github', [FEATURE_FLAGS.INBOX_REDESIGN]: true },
     },
     render: () => <QuickActivationPreview />,
     decorators: [
         mswDecorator({
             get: {
-                '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'quick' },
+                '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'test-github' },
                 '/api/projects/:id/signals/scout/configs/': [quickGeneralScout],
                 '/api/projects/:id/signals/scout/suggestions/': {
                     status: 'empty',
@@ -385,7 +385,11 @@ export const QuickEntry: Story = {
                 },
             },
             post: {
-                '/api/projects/:id/signals/onboarding/expose/': { draft: null, completed_at: null, variant: 'quick' },
+                '/api/projects/:id/signals/onboarding/expose/': {
+                    draft: null,
+                    completed_at: null,
+                    variant: 'test-github',
+                },
                 '/api/projects/:id/signals/scout/configs/sync/': [quickGeneralScout],
             },
         }),
@@ -400,7 +404,7 @@ export const QuickConnected: Story = {
                 '/api/projects/:id/signals/onboarding/': () => ({
                     draft: null,
                     completed_at: quickActivationCompleted ? '2026-10-14T00:00:00Z' : null,
-                    variant: 'quick',
+                    variant: 'test-github',
                     ...(quickActivationCompleted ? { jobs: { scout: 'started', recommendations: 'started' } } : {}),
                 }),
                 '/api/projects/:id/signals/scout/configs/': () => [
@@ -436,11 +440,15 @@ export const QuickConnected: Story = {
                 },
             },
             post: {
-                '/api/projects/:id/signals/onboarding/expose/': { draft: null, completed_at: null, variant: 'quick' },
+                '/api/projects/:id/signals/onboarding/expose/': {
+                    draft: null,
+                    completed_at: null,
+                    variant: 'test-github',
+                },
                 '/api/projects/:id/signals/scout/configs/sync/': [quickGeneralScout],
                 '/api/projects/:id/signals/onboarding/': async ({ request }) => [
                     200,
-                    { draft: await request.json(), completed_at: null, variant: 'quick' },
+                    { draft: await request.json(), completed_at: null, variant: 'test-github' },
                 ],
                 '/api/projects/:id/signals/config/': {},
                 '/api/projects/:id/signals/source_configs/': async ({ request }) => [
@@ -455,7 +463,7 @@ export const QuickConnected: Story = {
                         {
                             draft: await request.json(),
                             completed_at: '2026-10-14T00:00:00Z',
-                            variant: 'quick',
+                            variant: 'test-github',
                             jobs: { scout: 'started', recommendations: 'started' },
                         },
                     ]
@@ -479,7 +487,7 @@ export const QuickActivated: Story = {
                 '/api/projects/:id/signals/onboarding/': {
                     draft,
                     completed_at: '2026-10-14T00:00:00Z',
-                    variant: 'quick',
+                    variant: 'test-github',
                     jobs: { scout: 'started', recommendations: 'started' },
                 },
                 '/api/projects/:id/signals/scout/configs/': [{ ...quickGeneralScout, enabled: true, emit: true }],

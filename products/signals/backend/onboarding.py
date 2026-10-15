@@ -44,8 +44,8 @@ class InboxOnboardingStep(models.TextChoices):
 
 class InboxOnboardingVariant(models.TextChoices):
     CONTROL = "control", "Control"
-    TEST = "test", "Focused steps"
-    QUICK = "quick", "Activate and explore"
+    TEST_UI = "test-ui", "Focused steps"
+    TEST_GITHUB = "test-github", "Activate and explore"
 
 
 class InboxOnboardingExposureSerializer(serializers.Serializer):
@@ -233,7 +233,7 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
             self._enqueue_activation_jobs(config)
             return Response(self._state(config))
 
-        if (config.onboarding or {}).get("variant") == InboxOnboardingVariant.QUICK:
+        if (config.onboarding or {}).get("variant") == InboxOnboardingVariant.TEST_GITHUB:
             self._check_suggestion_access(request, write=True)
             if draft["automatic_implementation"] or not any(
                 item["kind"] == "canonical" and item["skill_name"] == "signals-scout-general"
@@ -295,7 +295,7 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
                     "completed_at": timezone.now().isoformat(),
                     "activated_by": user.pk,
                 }
-                if state.get("variant") == InboxOnboardingVariant.QUICK:
+                if state.get("variant") == InboxOnboardingVariant.TEST_GITHUB:
                     config.onboarding["jobs"] = {"scout": "pending", "recommendations": "pending"}
                 config.save(
                     update_fields=["onboarding", "autostart_enabled", "default_autostart_priority", "updated_at"]
@@ -306,7 +306,7 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
 
     def _enqueue_activation_jobs(self, config: SignalTeamConfig) -> None:
         state = config.onboarding or {}
-        if state.get("variant") != InboxOnboardingVariant.QUICK:
+        if state.get("variant") != InboxOnboardingVariant.TEST_GITHUB:
             return
         self._check_suggestion_access(self.request, write=True)
         from products.signals.backend.tasks import (

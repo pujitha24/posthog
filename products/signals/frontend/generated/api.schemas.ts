@@ -489,16 +489,16 @@ export interface InboxOnboardingDraftApi {
 
 /**
  * * `control` - Control
- * * `test` - Focused steps
- * * `quick` - Activate and explore
+ * * `test-ui` - Focused steps
+ * * `test-github` - Activate and explore
  */
 export type InboxOnboardingVariantEnumApi =
     (typeof InboxOnboardingVariantEnumApi)[keyof typeof InboxOnboardingVariantEnumApi]
 
 export const InboxOnboardingVariantEnumApi = {
     Control: 'control',
-    Test: 'test',
-    Quick: 'quick',
+    TestUi: 'test-ui',
+    TestGithub: 'test-github',
 } as const
 
 export interface InboxOnboardingStateApi {
@@ -514,8 +514,8 @@ export interface InboxOnboardingStateApi {
     /** Variant recorded at the first eligible impression.
      *
      * * `control` - Control
-     * * `test` - Focused steps
-     * * `quick` - Activate and explore */
+     * * `test-ui` - Focused steps
+     * * `test-github` - Activate and explore */
     variant: InboxOnboardingVariantEnumApi | null
 }
 
@@ -523,8 +523,8 @@ export interface InboxOnboardingExposureApi {
     /** Assigned experiment variant at the eligible Inbox impression.
      *
      * * `control` - Control
-     * * `test` - Focused steps
-     * * `quick` - Activate and explore */
+     * * `test-ui` - Focused steps
+     * * `test-github` - Activate and explore */
     variant: InboxOnboardingVariantEnumApi
 }
 

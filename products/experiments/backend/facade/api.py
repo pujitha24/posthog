@@ -8,6 +8,8 @@ using framework-free DTOs, wrapping the existing ExperimentService.
 from datetime import datetime
 from uuid import UUID
 
+import pydantic
+import structlog
 from rest_framework.exceptions import ValidationError
 
 from posthog.models.team import Team
@@ -31,6 +33,8 @@ from products.experiments.backend.hogql_queries.exposure_query_logic import (
 from products.experiments.backend.models.experiment import Experiment as ExperimentModel
 
 from .contracts import CreateExperimentInput, EndedExperiment, Experiment, ExperimentHealthFinding, ExperimentHealthReaderAccess, RunningExperiment
+
+logger = structlog.get_logger(__name__)
 
 
 def create_experiment(*, team: Team, user: User, input_dto: CreateExperimentInput) -> Experiment:
@@ -164,9 +168,15 @@ def list_ended_experiments_without_conclusion(
     return [EndedExperiment(id=id, name=name, ended_at=ended_at) for id, name, ended_at in rows]
 
 
-def _exposes_on_flag_calls(exposure_criteria: dict | None) -> bool:
-    criteria = normalize_to_exposure_criteria(exposure_criteria)
-    return criteria is None or is_default_exposure_config(criteria.exposure_config)
+def _exposes_on_flag_calls(experiment_id: int, exposure_criteria: dict | None) -> bool:
+    try:
+        criteria = normalize_to_exposure_criteria(exposure_criteria)
+    except pydantic.ValidationError:
+        logger.warning("experiment_exposure_criteria_invalid", experiment_id=experiment_id, exc_info=True)
+        return False
+    return criteria is None or (
+        criteria.activation_config is None and is_default_exposure_config(criteria.exposure_config)
+    )
 
 
 def list_running_experiments(
@@ -187,7 +197,7 @@ def list_running_experiments(
     return [
         RunningExperiment(id=id, name=name, started_at=started_at, flag_key=flag_key)
         for id, name, started_at, flag_key, exposure_criteria in rows
-        if _exposes_on_flag_calls(exposure_criteria)
+        if _exposes_on_flag_calls(id, exposure_criteria)
     ]
 
 

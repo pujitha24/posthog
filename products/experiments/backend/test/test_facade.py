@@ -249,6 +249,16 @@ class TestHighlightFacts(BaseTest):
         }
         self._experiment("Started recently", start_date=now - timedelta(days=10))
         self._experiment("Custom exposure", start_date=now - timedelta(days=62), exposure_criteria=PAGEVIEW_EXPOSURE)
+        self._experiment(
+            "Activation",
+            start_date=now - timedelta(days=62),
+            exposure_criteria={"activation_config": {"event": "signed up", "properties": []}},
+        )
+        self._experiment(
+            "Legacy criteria",
+            start_date=now - timedelta(days=62),
+            exposure_criteria={"multiple_variant_handling": "whatever_this_was"},
+        )
         self._experiment("Draft")
         self._experiment("Ended", start_date=now - timedelta(days=80), end_date=now - timedelta(days=1))
         self._experiment(

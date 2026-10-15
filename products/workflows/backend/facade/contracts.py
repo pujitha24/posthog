@@ -59,6 +59,15 @@ class WorkflowTaskDailyLimits:
 
 
 @frozen
+class RealtimeAudienceCohort:
+    """A realtime cohort a batch audience sends to from the realtime pipeline's membership."""
+
+    id: int
+    name: str
+    ready: bool
+
+
+@frozen
 class WorkflowBatchJob:
     """One batch run of a workflow.
 

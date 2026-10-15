@@ -1,4 +1,4 @@
-from posthog.dataclasses import frozen
+import hashlib
 
 from products.error_tracking.backend.facade.api import get_issue_basics
 from products.web_analytics.backend.facade.rage_pages import (
@@ -24,25 +24,31 @@ MIN_ERROR_SHARE = 0.3
 NO_ERRORS = ErrorsBeforeRage(sessions=0, issue_id=None, issue_sessions=0)
 
 
-@frozen
-class RageFacts:
-    page: RagePage | None
-    element: str | None = None
-    errors: ErrorsBeforeRage = NO_ERRORS
-
-
 def find(context: Context) -> Found:
     if not uses_product(context, *RAGE_PRODUCTS):
         return Found()
-    facts = context.daily("rage_facts", lambda: _rage_facts(context))
-    page = facts.page
+    page = context.daily("rage_page", lambda: find_top_rage_page(context.team, context.user))
     if page is None:
         return Found()
+    path_key = hashlib.sha256(page.path.encode()).hexdigest()[:16]
     title = RAGE_PAGE.format(people=users(page.people), page=(page.path or "/")[:40])
-    error = _error_item(context, page, facts.errors, title) if context.allows("error_tracking:read") else None
-    if error is not None:
-        return Found(items=(error,))
-    element = short(facts.element or "", 30)
+    if context.allows("error_tracking:read"):
+        errors = context.daily(
+            f"rage_errors:{path_key}",
+            lambda: context.guard(
+                "rage_errors", lambda: find_errors_before_rage(context.team, context.user, page.path), NO_ERRORS
+            ),
+        )
+        error = _error_item(context, page, errors, title)
+        if error is not None:
+            return Found(items=(error,))
+    top_element = context.daily(
+        f"rage_element:{path_key}",
+        lambda: context.guard(
+            "rage_element", lambda: find_top_rage_element(context.team, context.user, page.path), None
+        ),
+    )
+    element = short(top_element or "", 30)
     clicks = human(page.clicks)
     return Found(
         items=(
@@ -59,21 +65,6 @@ def find(context: Context) -> Found:
                 url="/replay/home",
             ),
         )
-    )
-
-
-def _rage_facts(context: Context) -> RageFacts:
-    page = find_top_rage_page(context.team, context.user)
-    if page is None:
-        return RageFacts(page=None)
-    return RageFacts(
-        page=page,
-        element=context.guard(
-            "rage_element", lambda: find_top_rage_element(context.team, context.user, page.path), None
-        ),
-        errors=context.guard(
-            "rage_errors", lambda: find_errors_before_rage(context.team, context.user, page.path), NO_ERRORS
-        ),
     )
 
 

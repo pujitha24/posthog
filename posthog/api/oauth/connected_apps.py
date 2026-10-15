@@ -2,6 +2,8 @@ import uuid
 from datetime import datetime
 from typing import cast
 
+from django.conf import settings
+
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status, viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -27,6 +29,9 @@ class ConnectedAppSerializer(serializers.Serializer):
     authorized_at = serializers.DateTimeField(help_text="When the user first authorized this application")
     is_verified = serializers.BooleanField(help_text="Whether this application has been verified by PostHog")
     is_first_party = serializers.BooleanField(help_text="Whether this is a first-party PostHog application")
+    is_setup_wizard = serializers.BooleanField(
+        help_text="Whether this is the PostHog setup wizard, which signs in to install the SDK, not to connect an agent"
+    )
 
 
 @extend_schema(tags=["oauth"])
@@ -70,6 +75,7 @@ class ConnectedAppsViewSet(viewsets.ViewSet):
             record(refresh_token["application_id"], refresh_token["created"], refresh_token["access_token__scope"])
 
         applications = OAuthApplication.objects.filter(id__in=app_map.keys())
+        wizard_client_ids = {*settings.WIZARD_GATEWAY_CLIENT_IDS, settings.WIZARD_CLOUD_RUN_OAUTH_CLIENT_ID} - {""}
 
         results = []
         for app in applications:
@@ -83,6 +89,7 @@ class ConnectedAppsViewSet(viewsets.ViewSet):
                     "authorized_at": app_data["authorized_at"],
                     "is_verified": app.is_verified,
                     "is_first_party": app.is_first_party,
+                    "is_setup_wizard": app.client_id in wizard_client_ids,
                 }
             )
 

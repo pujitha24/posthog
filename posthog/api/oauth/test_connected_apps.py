@@ -136,15 +136,18 @@ class TestConnectedAppsViewSet(APIBaseTest):
         assert response.status_code == status.HTTP_200_OK
         assert len(response.json()) == 2
 
-    def test_list_shows_verified_and_first_party_flags(self):
+    @parameterized.expand([("wizard_app", True), ("other_app", False)])
+    def test_list_shows_verified_first_party_and_setup_wizard_flags(self, _name: str, is_wizard: bool):
         app = self._create_app(is_verified=True, is_first_party=True)
         self._create_token(app)
 
-        response = self.client.get("/api/oauth/connected-apps/")
+        with self.settings(WIZARD_GATEWAY_CLIENT_IDS=[app.client_id] if is_wizard else ["another-client-id"]):
+            response = self.client.get("/api/oauth/connected-apps/")
 
         data = response.json()[0]
         assert data["is_verified"] is True
         assert data["is_first_party"] is True
+        assert data["is_setup_wizard"] is is_wizard
 
     def test_revoke_deletes_all_tokens_for_app(self):
         app = self._create_app()

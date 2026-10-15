@@ -15,6 +15,7 @@ const APP_A: ConnectedApp = {
     authorized_at: '2026-06-18T00:00:00Z',
     is_verified: true,
     is_first_party: false,
+    is_setup_wizard: false,
 }
 
 const APP_B: ConnectedApp = {
@@ -25,6 +26,15 @@ const APP_B: ConnectedApp = {
     authorized_at: '2026-06-10T00:00:00Z',
     is_verified: false,
     is_first_party: false,
+    is_setup_wizard: false,
+}
+
+const WIZARD_APP: ConnectedApp = {
+    ...APP_B,
+    id: 'wizard',
+    name: 'PostHog Wizard',
+    is_first_party: true,
+    is_setup_wizard: true,
 }
 
 async function waitForInFlightRevoke(getResolve: () => (() => void) | undefined): Promise<() => void> {
@@ -60,6 +70,16 @@ describe('connectedAppsLogic', () => {
         initKeaTests()
         logic = connectedAppsLogic()
         logic.mount()
+    })
+
+    it.each([
+        ['no connection', [], false],
+        ['only the setup wizard', [WIZARD_APP], false],
+        ['the setup wizard and an agent', [WIZARD_APP, APP_A], true],
+    ])('hasConnectedAgent with %s', async (_name, apps, expected) => {
+        await expectLogic(logic).toFinishAllListeners()
+        logic.actions.loadConnectedAppsSuccess(apps)
+        expect(logic.values.hasConnectedAgent).toBe(expected)
     })
 
     it('removes an app from the list when revoked', async () => {

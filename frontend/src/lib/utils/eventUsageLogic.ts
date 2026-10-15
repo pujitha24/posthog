@@ -110,6 +110,7 @@ export type DashboardFilterChangeType =
     | 'test_accounts'
     | 'compare'
     | 'metric_labels'
+    | 'metric_variables'
 
 export enum InsightEventSource {
     LongPress = 'long_press',

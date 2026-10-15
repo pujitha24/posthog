@@ -255,6 +255,17 @@ class TestHighlightFacts(BaseTest):
             exposure_criteria={"activation_config": {"event": "signed up", "properties": []}},
         )
         self._experiment(
+            "Filtered exposure",
+            start_date=now - timedelta(days=62),
+            exposure_criteria={
+                "exposure_config": {
+                    "kind": "ExperimentEventExposureConfig",
+                    "event": "$feature_flag_called",
+                    "properties": [{"key": "plan", "value": ["paid"], "operator": "exact", "type": "person"}],
+                }
+            },
+        )
+        self._experiment(
             "Legacy criteria",
             start_date=now - timedelta(days=62),
             exposure_criteria={"multiple_variant_handling": "whatever_this_was"},

@@ -175,7 +175,9 @@ def _exposes_on_flag_calls(experiment_id: int, exposure_criteria: dict | None) -
         logger.warning("experiment_exposure_criteria_invalid", experiment_id=experiment_id, exc_info=True)
         return False
     return criteria is None or (
-        criteria.activation_config is None and is_default_exposure_config(criteria.exposure_config)
+        criteria.activation_config is None
+        and is_default_exposure_config(criteria.exposure_config)
+        and not (criteria.exposure_config and criteria.exposure_config.properties)
     )
 
 

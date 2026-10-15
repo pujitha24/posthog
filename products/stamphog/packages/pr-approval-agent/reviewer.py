@@ -286,8 +286,10 @@ _AUDIT_HEAD = textwrap.dedent(
       not fix. List each with its source (who raised it, and the file when it
       is an inline comment). Check every such comment against the current
       code, including comments on older commits: a concern is resolved only
-      when the current code fixes it, or when someone other than the author
-      accepted it in the thread. A finding of your own goes here only when it is a
+      when the current code fixes it, when someone other than the author
+      accepted it in the thread, or when the review guidance's follow-up rule
+      covers it (an agent reviewer's finding about work outside this PR's own
+      changes, moved to a named follow-up PR). A finding of your own goes here only when it is a
       showstopper the policy names: the change could break production (crash,
       data loss, silent corruption) or it is a security issue (injection, auth
       bypass, data exposure). Name the file and the evidence.

@@ -103,6 +103,39 @@ export interface SignalTeamConfigApi {
 }
 
 /**
+ * * `pending` - Pending
+ * * `started` - Started
+ * * `skipped` - Unavailable
+ * * `failed` - Failed
+ */
+export type InboxOnboardingJobStatusEnumApi =
+    (typeof InboxOnboardingJobStatusEnumApi)[keyof typeof InboxOnboardingJobStatusEnumApi]
+
+export const InboxOnboardingJobStatusEnumApi = {
+    Pending: 'pending',
+    Started: 'started',
+    Skipped: 'skipped',
+    Failed: 'failed',
+} as const
+
+export interface InboxOnboardingJobsApi {
+    /** Dispatch status of the first general scout run.
+     *
+     * * `pending` - Pending
+     * * `started` - Started
+     * * `skipped` - Unavailable
+     * * `failed` - Failed */
+    scout: InboxOnboardingJobStatusEnumApi
+    /** Dispatch status of personalized scout recommendations.
+     *
+     * * `pending` - Pending
+     * * `started` - Started
+     * * `skipped` - Unavailable
+     * * `failed` - Failed */
+    recommendations: InboxOnboardingJobStatusEnumApi
+}
+
+/**
  * * `signals` - Signals
  * * `scouts` - Scouts
  * * `github` - GitHub
@@ -457,6 +490,7 @@ export interface InboxOnboardingDraftApi {
 /**
  * * `control` - Control
  * * `test` - Focused steps
+ * * `quick` - Activate and explore
  */
 export type InboxOnboardingVariantEnumApi =
     (typeof InboxOnboardingVariantEnumApi)[keyof typeof InboxOnboardingVariantEnumApi]
@@ -464,9 +498,12 @@ export type InboxOnboardingVariantEnumApi =
 export const InboxOnboardingVariantEnumApi = {
     Control: 'control',
     Test: 'test',
+    Quick: 'quick',
 } as const
 
 export interface InboxOnboardingStateApi {
+    /** Background work started by quick activation. */
+    jobs?: InboxOnboardingJobsApi
     /** Saved setup choices, without activating them. */
     draft: InboxOnboardingDraftApi | null
     /**
@@ -477,7 +514,8 @@ export interface InboxOnboardingStateApi {
     /** Variant recorded at the first eligible impression.
      *
      * * `control` - Control
-     * * `test` - Focused steps */
+     * * `test` - Focused steps
+     * * `quick` - Activate and explore */
     variant: InboxOnboardingVariantEnumApi | null
 }
 
@@ -485,7 +523,8 @@ export interface InboxOnboardingExposureApi {
     /** Assigned experiment variant at the eligible Inbox impression.
      *
      * * `control` - Control
-     * * `test` - Focused steps */
+     * * `test` - Focused steps
+     * * `quick` - Activate and explore */
     variant: InboxOnboardingVariantEnumApi
 }
 

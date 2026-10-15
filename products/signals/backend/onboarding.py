@@ -45,6 +45,7 @@ class InboxOnboardingStep(models.TextChoices):
 class InboxOnboardingVariant(models.TextChoices):
     CONTROL = "control", "Control"
     TEST = "test", "Focused steps"
+    QUICK = "quick", "Activate and explore"
 
 
 class InboxOnboardingExposureSerializer(serializers.Serializer):
@@ -93,8 +94,25 @@ class InboxOnboardingDraftSerializer(serializers.Serializer):
         return suggestions
 
 
+class InboxOnboardingJobStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    STARTED = "started", "Started"
+    SKIPPED = "skipped", "Unavailable"
+    FAILED = "failed", "Failed"
+
+
+class InboxOnboardingJobsSerializer(serializers.Serializer):
+    scout = serializers.ChoiceField(
+        choices=InboxOnboardingJobStatus.choices, help_text="Dispatch status of the first general scout run."
+    )
+    recommendations = serializers.ChoiceField(
+        choices=InboxOnboardingJobStatus.choices, help_text="Dispatch status of personalized scout recommendations."
+    )
+
+
 @extend_schema_serializer(many=False)
 class InboxOnboardingStateSerializer(serializers.Serializer):
+    jobs = InboxOnboardingJobsSerializer(required=False, help_text="Background work started by quick activation.")
     draft = InboxOnboardingDraftSerializer(allow_null=True, help_text="Saved setup choices, without activating them.")
     completed_at = serializers.DateTimeField(allow_null=True, help_text="When verified setup completed.")
     variant = serializers.ChoiceField(
@@ -143,7 +161,12 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
         state = config.onboarding or {}
         if any((state.get("draft") or {}).get(key) for key in ("suggestions", "activation_scouts")):
             self._check_suggestion_access(self.request)
-        return {"draft": state.get("draft"), "completed_at": state.get("completed_at"), "variant": state.get("variant")}
+        return {
+            "draft": state.get("draft"),
+            "completed_at": state.get("completed_at"),
+            "variant": state.get("variant"),
+            **({"jobs": state["jobs"]} if "jobs" in state else {}),
+        }
 
     @extend_schema(request=InboxOnboardingExposureSerializer, responses=InboxOnboardingStateSerializer)
     @action(detail=False, methods=["POST"])
@@ -207,7 +230,18 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
         draft = serializer.validated_data
         config = get_or_create_team_extension(self.team, SignalTeamConfig)
         if (config.onboarding or {}).get("completed_at"):
+            self._enqueue_activation_jobs(config)
             return Response(self._state(config))
+
+        if (config.onboarding or {}).get("variant") == InboxOnboardingVariant.QUICK:
+            self._check_suggestion_access(request, write=True)
+            if draft["automatic_implementation"] or not any(
+                item["kind"] == "canonical" and item["skill_name"] == "signals-scout-general"
+                for item in draft["suggestions"]
+            ):
+                raise serializers.ValidationError(
+                    "Quick activation requires the general scout and manual implementation."
+                )
 
         if any(
             draft.get(key) or ((config.onboarding or {}).get("draft") or {}).get(key)
@@ -261,11 +295,27 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
                     "completed_at": timezone.now().isoformat(),
                     "activated_by": user.pk,
                 }
+                if state.get("variant") == InboxOnboardingVariant.QUICK:
+                    config.onboarding["jobs"] = {"scout": "pending", "recommendations": "pending"}
                 config.save(
                     update_fields=["onboarding", "autostart_enabled", "default_autostart_priority", "updated_at"]
                 )
                 transaction.on_commit(lambda: self._report_completion(user, state.get("variant")), robust=True)
+                transaction.on_commit(lambda: self._enqueue_activation_jobs(config))
         return Response(self._state(config))
+
+    def _enqueue_activation_jobs(self, config: SignalTeamConfig) -> None:
+        state = config.onboarding or {}
+        if state.get("variant") != InboxOnboardingVariant.QUICK:
+            return
+        self._check_suggestion_access(self.request, write=True)
+        from products.signals.backend.tasks import (
+            launch_inbox_onboarding_job,  # noqa: PLC0415 - keep the Temporal graph off API route loading
+        )
+
+        for job, status in state.get("jobs", {}).items():
+            if status in ("pending", "failed"):
+                launch_inbox_onboarding_job.delay(self.team_id, job)
 
     def _capture(self, user: User, event: str, variant: str | None) -> None:
         posthoganalytics.capture(

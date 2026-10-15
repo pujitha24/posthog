@@ -1,7 +1,8 @@
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from unittest.mock import patch
@@ -19,6 +20,7 @@ from products.today.backend.logic.highlight_registry import load_sources
 from products.today.backend.logic.highlight_sources import errors
 from products.today.backend.logic.highlight_types import Context
 
+NAME = "TypeError: Cannot read properties of undefined"
 ISSUE_ID = uuid.UUID("01890000-0000-7000-8000-000000000001")
 TOTALS = WeeklyExceptionTotals(occurrences=10_000, active_users=20_000)
 
@@ -39,9 +41,20 @@ def basics(name: str) -> ErrorTrackingIssueBasics:
     return ErrorTrackingIssueBasics(id=ISSUE_ID, name=name, description=None, status="active", severity=None)
 
 
+def guard(_name: str, provider: Callable[[], Any], default: Any) -> Any:
+    try:
+        return provider()
+    except TimeoutError:
+        return default
+
+
 class TestErrors(SimpleTestCase):
     def _find(
-        self, new: list[NewIssueActivity], quiet: list[ErrorTrackingIssueBasics], *, relevant: bool = True
+        self,
+        new: list[NewIssueActivity],
+        quiet: list[ErrorTrackingIssueBasics] | Exception,
+        *,
+        relevant: bool = True,
     ) -> list[tuple[str, str, str | None]]:
         context = cast(
             Context,
@@ -50,13 +63,19 @@ class TestErrors(SimpleTestCase):
                 user=SimpleNamespace(id=2),
                 today=date(2026, 10, 13),
                 daily=lambda _name, compute: compute(),
+                guard=guard,
             ),
         )
         registered = next(s for s in load_sources() if s.name == "errors")
         with (
             patch.object(errors, "list_new_unassigned_issue_activity", return_value=new),
             patch.object(errors, "get_weekly_exception_totals", return_value=TOTALS),
-            patch.object(errors, "list_quiet_issues_assigned_to", return_value=quiet),
+            patch.object(
+                errors,
+                "list_quiet_issues_assigned_to",
+                side_effect=quiet if isinstance(quiet, Exception) else None,
+                return_value=quiet,
+            ),
             patch.object(errors, "uses_product", return_value=relevant),
         ):
             return [(c.title, c.detail, c.url) for c in registered.find(context).items]
@@ -93,6 +112,15 @@ class TestErrors(SimpleTestCase):
                 ),
             ),
             ("server error with a small share", new_issue(0.0, 3, 199), True, None),
+            (
+                "server error so large it shows to everyone",
+                new_issue(0.0, 3, 6_000),
+                False,
+                (
+                    "New server error ‘TypeError: Cannot read properties of undefined’ is 60% of all errors",
+                    "Since Oct 9 · 6.0k events in the last 7 days · No owner",
+                ),
+            ),
             ("mixed client and server error", new_issue(0.5, 60, 500), True, None),
         ]
     )
@@ -129,3 +157,15 @@ class TestErrors(SimpleTestCase):
         self, _name: str, names: list[str], expected: tuple[str, str, str]
     ) -> None:
         self.assertEqual(self._find([], [basics(name) for name in names]), [expected])
+
+    def test_a_qualifying_error_behind_weak_ones_still_shows(self) -> None:
+        weak = [new_issue(0.5, 60, 900) for _ in range(5)]
+
+        found = self._find([*weak, new_issue(1.0, 60, 90)], [])
+
+        self.assertEqual([title for title, _, _ in found], [f"60 users saw the new error ‘{NAME}’"])
+
+    def test_new_errors_survive_when_the_quiet_issue_query_fails(self) -> None:
+        found = self._find([new_issue(1.0, 60, 90)], TimeoutError("quiet issue query timed out"))
+
+        self.assertEqual([title for title, _, _ in found], [f"60 users saw the new error ‘{NAME}’"])

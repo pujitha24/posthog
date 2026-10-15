@@ -199,36 +199,17 @@ def get_issue_basics(team_id: int, issue_id: UUID | str) -> contracts.ErrorTrack
 
 
 def list_new_unassigned_issue_activity(team: "Team", user: "User", *, limit: int) -> list[contracts.NewIssueActivity]:
-    return [
-        contracts.NewIssueActivity(
-            id=issue.id,
-            name=issue.name,
-            description=issue.description,
-            first_seen=first_seen,
-            users=users,
-            occurrences=occurrences,
-            client_share=client_share,
-        )
-        for issue, (_, first_seen, users, occurrences, client_share) in activity.new_unassigned_issue_activity(
-            team, user, limit=limit
-        )
-    ]
+    return activity.new_unassigned_issue_activity(team, user, limit=limit)
 
 
 def get_weekly_exception_totals(team: "Team", user: "User") -> contracts.WeeklyExceptionTotals:
-    occurrences, active_users = activity.weekly_totals(team, user)
-    return contracts.WeeklyExceptionTotals(occurrences=occurrences, active_users=active_users)
+    return activity.weekly_totals(team, user)
 
 
 def list_quiet_issues_assigned_to(
     team: "Team", user: "User", *, quiet_days: int, limit: int
 ) -> list[contracts.ErrorTrackingIssueBasics]:
-    return [
-        contracts.ErrorTrackingIssueBasics(
-            id=issue.id, name=issue.name, description=issue.description, status=issue.status, severity=issue.severity
-        )
-        for issue in activity.quiet_issues_assigned_to(team, user, quiet_days=quiet_days, limit=limit)
-    ]
+    return activity.quiet_issues_assigned_to(team, user, quiet_days=quiet_days, limit=limit)
 
 
 def resolve_fingerprints(team_id: int, issue_ids: list[str]) -> list[str]:

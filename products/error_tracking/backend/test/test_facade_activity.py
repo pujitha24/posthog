@@ -35,7 +35,11 @@ class TestIssueActivity(ClickhouseTestMixin, APIBaseTest):
         return issue
 
     def _exception(self, issue: ErrorTrackingIssue, distinct_id: str, days: int, lib: str = "web") -> None:
-        fingerprint = ErrorTrackingIssueFingerprintV2.objects.get(issue=issue).fingerprint
+        fingerprint = (
+            ErrorTrackingIssueFingerprintV2.objects.filter(issue=issue)
+            .order_by("created_at")
+            .values_list("fingerprint", flat=True)[0]
+        )
         _create_event(
             team=self.team,
             event="$exception",
@@ -44,7 +48,7 @@ class TestIssueActivity(ClickhouseTestMixin, APIBaseTest):
             timestamp=self._ago(days),
         )
 
-    def test_new_issue_activity_counts_only_new_active_unassigned_issues(self) -> None:
+    def test_new_issue_activity_counts_only_new_active_unassigned_issues_by_their_oldest_fingerprint(self) -> None:
         for distinct_id in ("user-1", "user-2"):
             _create_person(team=self.team, distinct_ids=[distinct_id])
         new = self._issue("TypeError")
@@ -52,10 +56,13 @@ class TestIssueActivity(ClickhouseTestMixin, APIBaseTest):
         ErrorTrackingIssueAssignment.objects.create(issue=assigned, team=self.team, user=self.user)
         resolved = self._issue("Resolved", status=ErrorTrackingIssue.Status.RESOLVED)
         old = self._issue("Old", first_seen_days=30)
+        merged = self._issue("Merged")
+        older = ErrorTrackingIssueFingerprintV2.objects.create(team=self.team, issue=merged, fingerprint=str(uuid4()))
+        ErrorTrackingIssueFingerprintV2.objects.filter(id=older.id).update(first_seen=self._ago(30))
         self._exception(new, "user-1", 1)
         self._exception(new, "user-1", 2)
         self._exception(new, "user-2", 2, lib="posthog-python")
-        for issue in (assigned, resolved, old):
+        for issue in (assigned, resolved, old, merged):
             self._exception(issue, "user-1", 1)
         flush_persons_and_events()
 

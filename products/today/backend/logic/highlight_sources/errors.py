@@ -20,6 +20,7 @@ ASSIGNED_QUIET_ONE_DETAIL = "Resolve it if the fix is live"
 ASSIGNED_QUIET_MANY = "{n} of your issues had no events in the last 14 days"
 AND_MORE = "{names} and {n} more"
 
+NEW_ISSUE_CANDIDATES = 50
 NEW_ISSUES = 5
 QUIET_DAYS = 14
 QUIET_ISSUES = 500
@@ -29,7 +30,10 @@ MIN_SERVER_SHARE = 0.02
 
 
 def find(context: Context) -> Found:
-    return Found(items=(*_new_errors(context), *_quiet_assigned(context)))
+    none: list[Candidate] = []
+    new = context.guard("errors_new", lambda: _new_errors(context), none)
+    quiet = context.guard("errors_quiet", lambda: _quiet_assigned(context), none)
+    return Found(items=(*new, *quiet))
 
 
 def _issue_name(name: str | None, description: str | None) -> str:
@@ -37,13 +41,13 @@ def _issue_name(name: str | None, description: str | None) -> str:
 
 
 def _new_errors(context: Context) -> list[Candidate]:
-    issues = list_new_unassigned_issue_activity(context.team, context.user, limit=NEW_ISSUES)
+    issues = list_new_unassigned_issue_activity(context.team, context.user, limit=NEW_ISSUE_CANDIDATES)
     if not issues:
         return []
     totals = context.daily("exception_totals", lambda: get_weekly_exception_totals(context.team, context.user))
     relevant = uses_product(context, "Error tracking")
     candidates = [_new_error(context, issue, totals, relevant) for issue in issues]
-    return [candidate for candidate in candidates if candidate is not None]
+    return [candidate for candidate in candidates if candidate is not None][:NEW_ISSUES]
 
 
 def _new_error(
@@ -62,7 +66,7 @@ def _new_error(
         share = issue.occurrences / totals.occurrences
         if share < MIN_SERVER_SHARE:
             return None
-        importance = min(0.7, 0.4 + share / 0.1)
+        importance = min(1.0, 0.4 + share / 0.1)
         title = NEW_SERVER_ERROR.format(issue=name, share=f"{share * 100:.0f}%")
         detail = NEW_SERVER_ERROR_DETAIL.format(started=started, events=human(issue.occurrences))
     else:

@@ -33,20 +33,22 @@ def find(context: Context) -> Found:
     path_key = hashlib.sha256(page.path.encode()).hexdigest()[:16]
     title = RAGE_PAGE.format(people=users(page.people), page=(page.path or "/")[:40])
     if context.allows("error_tracking:read"):
-        errors = context.daily(
-            f"rage_errors:{path_key}",
-            lambda: context.guard(
-                "rage_errors", lambda: find_errors_before_rage(context.team, context.user, page.path), NO_ERRORS
+        errors = context.guard(
+            "rage_errors",
+            lambda: context.daily(
+                f"rage_errors:{path_key}", lambda: find_errors_before_rage(context.team, context.user, page.path)
             ),
+            NO_ERRORS,
         )
         error = _error_item(context, page, errors, title)
         if error is not None:
             return Found(items=(error,))
-    top_element = context.daily(
-        f"rage_element:{path_key}",
-        lambda: context.guard(
-            "rage_element", lambda: find_top_rage_element(context.team, context.user, page.path), None
+    top_element = context.guard(
+        "rage_element",
+        lambda: context.daily(
+            f"rage_element:{path_key}", lambda: find_top_rage_element(context.team, context.user, page.path)
         ),
+        None,
     )
     element = short(top_element or "", 30)
     clicks = human(page.clicks)

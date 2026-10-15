@@ -1,5 +1,9 @@
 import re
 
+from posthog.models import UserProductList
+
+from .highlight_types import Context
+
 
 def human(value: float) -> str:
     size = abs(value)
@@ -12,8 +16,16 @@ def human(value: float) -> str:
     return f"{value:.0f}" if size >= 10 or float(value).is_integer() else f"{value:.1f}"
 
 
-def exact(value: float) -> str:
-    return f"{value:,.0f}" if abs(value) < 100_000 else human(value)
+def exact(value: float, decimal_places: int | None = None) -> str:
+    if abs(value) >= 100_000:
+        return human(value)
+    if decimal_places is None:
+        decimal_places = 0 if abs(value) >= 100 or float(value).is_integer() else 2
+    return f"{value:,.{decimal_places}f}"
+
+
+def users(count: float) -> str:
+    return "1 user" if count == 1 else f"{human(count)} users"
 
 
 def short(text: str, limit: int = 60) -> str:
@@ -22,3 +34,9 @@ def short(text: str, limit: int = 60) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rsplit(" ", 1)[0].rstrip(",;:(-– ")
+
+
+def uses_product(context: Context, *product_paths: str) -> bool:
+    return UserProductList.objects.filter(
+        team_id=context.team.id, user_id=context.user.id, enabled=True, product_path__in=product_paths
+    ).exists()

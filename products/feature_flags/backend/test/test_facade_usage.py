@@ -25,8 +25,11 @@ from products.feature_flags.backend.models.organization_feature_flags_config imp
 class TestListFlagsCreatedBy(BaseTest):
     def test_lists_only_the_live_flags_the_person_created_in_this_project(self) -> None:
         mine = FeatureFlag.objects.create(team=self.team, key="checkout", created_by=self.user)
-        owned = FeatureFlag.objects.create(team=self.team, key="pricing-test", created_by=self.user)
-        Experiment.objects.create(team=self.team, name="Pricing", feature_flag=owned)
+        in_experiment = FeatureFlag.objects.create(team=self.team, key="pricing-test", created_by=self.user)
+        Experiment.objects.create(team=self.team, name="Pricing", feature_flag=in_experiment)
+        remote = FeatureFlag.objects.create(
+            team=self.team, key="app-settings", created_by=self.user, is_remote_configuration=True
+        )
         FeatureFlag.objects.create(team=self.team, key="deleted", created_by=self.user, deleted=True)
         FeatureFlag.objects.create(team=self.team, key="theirs", created_by=self._create_user("other@example.com"))
         FeatureFlag.objects.create(
@@ -36,7 +39,8 @@ class TestListFlagsCreatedBy(BaseTest):
         flags = list_flags_created_by(self.team.id, self.user.id, limit=10)
 
         self.assertEqual(
-            [(f.id, f.key, f.owned) for f in flags], [(mine.id, "checkout", False), (owned.id, "pricing-test", True)]
+            [(f.id, f.removal_blocked, f.remote_configuration) for f in flags],
+            [(mine.id, False, False), (in_experiment.id, True, False), (remote.id, False, True)],
         )
 
 
@@ -89,3 +93,18 @@ class TestSummarizeFlagCalls(ClickhouseTestMixin, BaseTest):
             value_this_week="true",
         )
         self.assertEqual((dict(summary.by_key), summary.complete), ({"checkout": expected} if counted else {}, True))
+
+    def test_a_call_without_a_readable_flag_key_marks_the_summary_incomplete(self) -> None:
+        _create_person(team=self.team, distinct_ids=["user-1"])
+        _create_event(
+            team=self.team,
+            event="$feature_flag_called",
+            distinct_id="user-1",
+            properties={"$feature_flag_response": True},
+            timestamp=self._ago(2),
+        )
+        flush_persons_and_events()
+
+        summary = summarize_flag_calls(self.team, self.user)
+
+        self.assertEqual((dict(summary.by_key), summary.complete), ({}, False))

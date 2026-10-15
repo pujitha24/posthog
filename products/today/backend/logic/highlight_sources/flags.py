@@ -43,7 +43,7 @@ def find(context: Context) -> Found:
     flags = [
         flag
         for flag in list_flags_created_by(context.team.id, context.user.id, limit=500)
-        if not EXCLUDED_FLAGS.search(flag.key)
+        if not flag.remote_configuration and not EXCLUDED_FLAGS.search(flag.key)
     ]
     if not flags:
         return Found()
@@ -55,7 +55,7 @@ def find(context: Context) -> Found:
         calls = summary.by_key.get(flag.key, NO_CALLS)
         if calls.people_last_week >= MIN_REACH and calls.people_this_week <= calls.people_last_week * 0.5:
             reach_drops.append(_reach_drop(flag, calls))
-        if flag.owned or RISKY_FLAGS.search(flag.key):
+        if flag.removal_blocked or RISKY_FLAGS.search(flag.key):
             continue
         age = (context.today - timezone.localtime(flag.created_at, context.team.timezone_info).date()).days
         if age >= SAME_VALUE_MIN_AGE_DAYS and calls.people_this_week >= MIN_REACH and calls.values_this_week == 1:

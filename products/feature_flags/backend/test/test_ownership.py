@@ -6,12 +6,7 @@ from rest_framework import serializers
 from products.early_access_features.backend.models import EarlyAccessFeature
 from products.experiments.backend.models.experiment import Experiment
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
-from products.feature_flags.backend.ownership import (
-    FLAG_OWNER_SURVEY,
-    assert_flag_available_for,
-    flag_owner_kind,
-    owned_flag_ids,
-)
+from products.feature_flags.backend.ownership import FLAG_OWNER_SURVEY, assert_flag_available_for, flag_owner_kind
 from products.product_tours.backend.models import ProductTour
 from products.surveys.backend.models import Survey
 
@@ -67,7 +62,6 @@ class TestFlagOwnership(APIBaseTest):
             getattr(self, setup)(flag)
 
         assert flag_owner_kind(flag) == expected
-        assert owned_flag_ids(FeatureFlag.objects.filter(pk=flag.pk)) == ({flag.pk} if expected else set())
 
     def test_guard_rejects_a_flag_a_different_product_owns(self) -> None:
         flag = self._flag("taken")

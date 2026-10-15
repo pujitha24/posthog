@@ -19,12 +19,15 @@ MONDAY = date(2026, 10, 12)
 TUESDAY = date(2026, 10, 13)
 
 
-def created(key: str, days_old: int, *, flag_id: int = 1, owned: bool = False) -> CreatedFlag:
+def created(
+    key: str, days_old: int, *, flag_id: int = 1, blocked: bool = False, remote_configuration: bool = False
+) -> CreatedFlag:
     return CreatedFlag(
         id=flag_id,
         key=key,
         created_at=datetime(2026, 10, 12, 9, tzinfo=UTC) - timedelta(days=days_old),
-        owned=owned,
+        removal_blocked=blocked,
+        remote_configuration=remote_configuration,
     )
 
 
@@ -65,8 +68,8 @@ class TestFlags(SimpleTestCase):
         ):
             return [(c.title, c.detail, c.url) for c in registered.find(context).items]
 
-    def test_a_flag_that_reaches_half_the_people_is_a_risk_even_when_another_product_owns_it(self) -> None:
-        found = self._find(TUESDAY, [created("checkout", 60, flag_id=7, owned=True)], {"checkout": calls(10, 40)})
+    def test_a_flag_that_reaches_half_the_people_is_a_risk_even_when_removal_is_blocked(self) -> None:
+        found = self._find(TUESDAY, [created("checkout", 60, flag_id=7, blocked=True)], {"checkout": calls(10, 40)})
 
         self.assertEqual(
             found,
@@ -91,7 +94,8 @@ class TestFlags(SimpleTestCase):
             ),
             ("unused but the call list is cut", created("old-banner", 30), {}, False, None),
             ("too new", created("old-banner", 13), {}, True, None),
-            ("owned by an experiment", created("old-banner", 30, owned=True), {}, True, None),
+            ("blocked by an experiment or a reference", created("old-banner", 30, blocked=True), {}, True, None),
+            ("a remote configuration", created("old-banner", 30, remote_configuration=True), {}, True, None),
             ("risky to remove", created("kill-switch", 30), {}, True, None),
             ("a survey flag", created("survey-targeting-abc", 30), {}, True, None),
         ]

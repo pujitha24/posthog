@@ -25,6 +25,7 @@ from posthog.clickhouse.query_tagging import Feature, tags_context
 from posthog.event_usage import get_event_source
 from posthog.models.team.team import Team
 from posthog.models.user import User
+from posthog.permissions import PostHogFeatureFlagPermission
 from posthog.renderers import SafeJSONRenderer
 from posthog.storage.object_storage import ObjectStorageError
 
@@ -115,6 +116,8 @@ class _MCPResultFileUnavailable(APIException):
 class MCPToolsViewSet(TeamAndOrgViewSetMixin, GenericViewSet):
     scope_object = "project"
     serializer_class = _FallbackSerializer
+    permission_classes = [PostHogFeatureFlagPermission]
+    posthog_feature_flag = {"mcp-openai-result-files": ["store_result"]}
 
     renderer_classes = [SafeJSONRenderer]
 

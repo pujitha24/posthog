@@ -50,7 +50,7 @@ def _same_weekday(context: Context, metric: KeyMetric) -> Candidate | None:
         relevance=0.6,
         title=KEY_METRIC_DAY[up].format(name=metric.name, pct=f"{abs(found.pct or 0):.0f}"),
         detail=(KEY_METRIC_DAY_DETAIL if found.same_weekday else KEY_METRIC_DAY_DETAIL_WEEK).format(
-            now=exact(found.now or 0), usual=exact(found.usual or 0), weekday=found.weekday
+            now=exact(found.now or 0), usual=exact(found.usual or 0, 0), weekday=found.weekday
         ),
         series=[v for _, v in metric.daily[-14:]],
     )

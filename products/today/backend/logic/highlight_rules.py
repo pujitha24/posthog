@@ -16,6 +16,14 @@ def human(value: float) -> str:
     return f"{value:.0f}" if size >= 10 or float(value).is_integer() else f"{value:.1f}"
 
 
+def exact(value: float, decimal_places: int | None = None) -> str:
+    if abs(value) >= 100_000:
+        return human(value)
+    if decimal_places is None:
+        decimal_places = 0 if abs(value) >= 100 or float(value).is_integer() else 2
+    return f"{value:,.{decimal_places}f}"
+
+
 def users(count: float) -> str:
     return "1 user" if count == 1 else f"{human(count)} users"
 

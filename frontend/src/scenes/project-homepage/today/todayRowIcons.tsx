@@ -1,6 +1,7 @@
 import {
     IconBell,
     IconDatabase,
+    IconDecisionTree,
     IconFlask,
     IconMessage,
     IconRewindPlay,
@@ -25,6 +26,8 @@ const ANALYTICS: TodayRowIcon = {
     glyph: <IconTrends />,
 }
 
+const WORKFLOWS: TodayRowIcon = { color: 'var(--color-product-workflows-light)', glyph: <IconDecisionTree /> }
+
 const HIGHLIGHT_ICONS: Record<string, TodayRowIcon> = {
     alerts: { color: 'var(--color-product-alerts-light)', glyph: <IconBell /> },
     errors: { color: 'var(--color-product-error-tracking-light)', glyph: <IconWarning /> },
@@ -33,6 +36,8 @@ const HIGHLIGHT_ICONS: Record<string, TodayRowIcon> = {
     rage: { color: 'var(--color-product-session-replay-light)', glyph: <IconRewindPlay /> },
     surveys: { color: 'var(--color-product-surveys-light)', glyph: <IconMessage /> },
     warehouse_syncs: { color: 'var(--color-product-data-warehouse-light)', glyph: <IconDatabase /> },
+    workflow_ideas: WORKFLOWS,
+    workflows: WORKFLOWS,
 }
 
 function sourceIcon(source: string | null | undefined): TodayRowIcon {

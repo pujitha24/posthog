@@ -4,7 +4,7 @@ This is the ONLY module other apps are allowed to import.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from django.db.models import QuerySet
@@ -17,7 +17,7 @@ from products.access_control.backend.facade.api import valid_role_member_user_id
 
 from .. import logic, weekly_digest, weekly_digest_delivery
 from ..indexed_embedding import EMBEDDING_TABLES
-from ..logic import external_references, github_external_references, rules
+from ..logic import activity, external_references, github_external_references, rules
 from ..models import (
     ErrorTrackingIssue,
     override_error_tracking_issue_fingerprint as override_error_tracking_issue_fingerprint,
@@ -26,6 +26,11 @@ from ..models import (
 )
 from ..remote_config import build_error_tracking_config as build_error_tracking_config
 from . import contracts
+
+if TYPE_CHECKING:
+    from posthog.models.team import Team
+    from posthog.models.user import User
+
 from .contracts import (
     CrashFreeSummary as CrashFreeSummary,
     DocumentEmbeddingTable as DocumentEmbeddingTable,
@@ -191,6 +196,39 @@ def get_issue_basics(team_id: int, issue_id: UUID | str) -> contracts.ErrorTrack
         status=issue.status,
         severity=issue.severity,
     )
+
+
+def list_new_unassigned_issue_activity(team: "Team", user: "User", *, limit: int) -> list[contracts.NewIssueActivity]:
+    return [
+        contracts.NewIssueActivity(
+            id=issue.id,
+            name=issue.name,
+            description=issue.description,
+            first_seen=first_seen,
+            users=users,
+            occurrences=occurrences,
+            client_share=client_share,
+        )
+        for issue, (_, first_seen, users, occurrences, client_share) in activity.new_unassigned_issue_activity(
+            team, user, limit=limit
+        )
+    ]
+
+
+def get_weekly_exception_totals(team: "Team", user: "User") -> contracts.WeeklyExceptionTotals:
+    occurrences, active_users = activity.weekly_totals(team, user)
+    return contracts.WeeklyExceptionTotals(occurrences=occurrences, active_users=active_users)
+
+
+def list_quiet_issues_assigned_to(
+    team: "Team", user: "User", *, quiet_days: int, limit: int
+) -> list[contracts.ErrorTrackingIssueBasics]:
+    return [
+        contracts.ErrorTrackingIssueBasics(
+            id=issue.id, name=issue.name, description=issue.description, status=issue.status, severity=issue.severity
+        )
+        for issue in activity.quiet_issues_assigned_to(team, user, quiet_days=quiet_days, limit=limit)
+    ]
 
 
 def resolve_fingerprints(team_id: int, issue_ids: list[str]) -> list[str]:

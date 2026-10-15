@@ -1,0 +1,135 @@
+import uuid
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from typing import cast
+from zoneinfo import ZoneInfo
+
+from unittest.mock import patch
+
+from django.core.cache import cache
+from django.test import SimpleTestCase
+
+from parameterized import parameterized
+
+from products.error_tracking.backend.facade.contracts import (
+    ErrorTrackingIssueBasics,
+    NewIssueActivity,
+    WeeklyExceptionTotals,
+)
+from products.today.backend.logic.highlight_registry import load_sources
+from products.today.backend.logic.highlight_sources import errors
+from products.today.backend.logic.highlight_types import Context
+
+ISSUE_ID = uuid.UUID("01890000-0000-7000-8000-000000000001")
+TOTALS = WeeklyExceptionTotals(occurrences=10_000, active_users=20_000)
+
+
+def new_issue(client_share: float, users: int, occurrences: int) -> NewIssueActivity:
+    return NewIssueActivity(
+        id=ISSUE_ID,
+        name="TypeError",
+        description="Cannot read properties of undefined",
+        first_seen=datetime(2026, 10, 9, 15, tzinfo=UTC),
+        users=users,
+        occurrences=occurrences,
+        client_share=client_share,
+    )
+
+
+def basics(name: str) -> ErrorTrackingIssueBasics:
+    return ErrorTrackingIssueBasics(id=ISSUE_ID, name=name, description=None, status="active", severity=None)
+
+
+class TestErrors(SimpleTestCase):
+    def setUp(self) -> None:
+        cache.clear()
+
+    def _find(
+        self, new: list[NewIssueActivity], quiet: list[ErrorTrackingIssueBasics], *, relevant: bool = True
+    ) -> list[tuple[str, str, str | None]]:
+        context = cast(
+            Context,
+            SimpleNamespace(
+                team=SimpleNamespace(id=1, timezone_info=ZoneInfo("UTC")),
+                user=SimpleNamespace(id=2),
+                today=date(2026, 10, 13),
+                restrictions="none",
+            ),
+        )
+        registered = next(s for s in load_sources() if s.name == "errors")
+        with (
+            patch.object(errors, "list_new_unassigned_issue_activity", return_value=new),
+            patch.object(errors, "get_weekly_exception_totals", return_value=TOTALS),
+            patch.object(errors, "list_quiet_issues_assigned_to", return_value=quiet),
+            patch.object(errors, "uses_product", return_value=relevant),
+        ):
+            return [(c.title, c.detail, c.url) for c in registered.find(context).items]
+
+    @parameterized.expand(
+        [
+            (
+                "client error seen by enough people",
+                new_issue(1.0, 60, 90),
+                True,
+                (
+                    "60 users saw the new error ‘TypeError: Cannot read properties of undefined’",
+                    "Since Oct 9 · 0.3% of active users · No owner",
+                ),
+            ),
+            ("client error seen by too few people", new_issue(1.0, 49, 90), True, None),
+            ("client error for someone who does not use error tracking", new_issue(1.0, 60, 90), False, None),
+            (
+                "client error so wide it shows to everyone",
+                new_issue(1.0, 1_000, 2_000),
+                False,
+                (
+                    "1.0k users saw the new error ‘TypeError: Cannot read properties of undefined’",
+                    "Since Oct 9 · 5.0% of active users · No owner",
+                ),
+            ),
+            (
+                "server error with a large share",
+                new_issue(0.0, 3, 500),
+                True,
+                (
+                    "New server error ‘TypeError: Cannot read properties of undefined’ is 5% of all errors",
+                    "Since Oct 9 · 500 events in the last 7 days · No owner",
+                ),
+            ),
+            ("server error with a small share", new_issue(0.0, 3, 199), True, None),
+            ("mixed client and server error", new_issue(0.5, 60, 500), True, None),
+        ]
+    )
+    def test_a_new_unowned_error_shows_when_it_reaches_enough_people_or_errors(
+        self, _name: str, issue: NewIssueActivity, relevant: bool, expected: tuple[str, str] | None
+    ) -> None:
+        found = self._find([issue], [], relevant=relevant)
+
+        self.assertEqual(found, [(*expected, f"/error_tracking/{ISSUE_ID}")] if expected else [])
+
+    @parameterized.expand(
+        [
+            (
+                "one issue",
+                ["ChunkLoadError"],
+                (
+                    "Your issue ‘ChunkLoadError’ had no events in the last 14 days",
+                    "Resolve it if the fix is live",
+                    f"/error_tracking/{ISSUE_ID}",
+                ),
+            ),
+            (
+                "many issues",
+                ["ChunkLoadError", "TimeoutError", "KeyError"],
+                (
+                    "3 of your issues had no events in the last 14 days",
+                    "‘ChunkLoadError’ and 2 more",
+                    "/error_tracking",
+                ),
+            ),
+        ]
+    )
+    def test_quiet_assigned_issues_become_one_item(
+        self, _name: str, names: list[str], expected: tuple[str, str, str]
+    ) -> None:
+        self.assertEqual(self._find([], [basics(name) for name in names]), [expected])

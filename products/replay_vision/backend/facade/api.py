@@ -94,3 +94,12 @@ def has_signal_emitting_scanner(team_id: int) -> bool:
     signals tables alone. See `SignalSourceConfig.is_source_enabled`.
     """
     return ReplayScanner.objects.filter(team_id=team_id, enabled=True, emits_signals=True).exists()
+
+
+def signal_emitting_scanner_ids(team_id: int, scanner_ids: list[str]) -> set[str]:
+    return {
+        str(scanner_id)
+        for scanner_id in ReplayScanner.objects.filter(
+            team_id=team_id, id__in=scanner_ids, enabled=True, emits_signals=True
+        ).values_list("id", flat=True)
+    }

@@ -32,7 +32,14 @@ from products.experiments.backend.hogql_queries.exposure_query_logic import (
 )
 from products.experiments.backend.models.experiment import Experiment as ExperimentModel
 
-from .contracts import CreateExperimentInput, EndedExperiment, Experiment, ExperimentHealthFinding, ExperimentHealthReaderAccess, RunningExperiment
+from .contracts import (
+    CreateExperimentInput,
+    EndedExperiment,
+    Experiment,
+    ExperimentHealthFinding,
+    ExperimentHealthReaderAccess,
+    RunningExperiment,
+)
 
 logger = structlog.get_logger(__name__)
 

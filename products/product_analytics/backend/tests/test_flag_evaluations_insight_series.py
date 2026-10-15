@@ -38,6 +38,8 @@ from posthog.schema import (
 
 from posthog.hogql.database.schema.flag_evaluations import FLAG_EVALUATIONS_HOGQL_TABLE
 
+from posthog.hogql_queries.utils.breakdowns import BREAKDOWN_NULL_STRING_LABEL
+
 from products.product_analytics.backend.facade.queries import (
     FunnelsQueryRunner,
     LifecycleQueryRunner,
@@ -90,6 +92,7 @@ class TestFlagEvaluationsInsightSeries(ClickhouseTestMixin, BaseTest):
         person_created_at = datetime(2025, 1, 8, 8, 0, tzinfo=UTC)
         alice = _create_person(team_id=self.team.pk, distinct_ids=["alice"], created_at=person_created_at)
         bob = _create_person(team_id=self.team.pk, distinct_ids=["bob"], created_at=person_created_at)
+        self.bob_uuid = bob.uuid
         for distinct_id, person_id, flag_key, response, occurred_at, properties in [
             (
                 "alice",
@@ -147,12 +150,21 @@ class TestFlagEvaluationsInsightSeries(ClickhouseTestMixin, BaseTest):
 
     @parameterized.expand(
         [
-            ("total_calls", BaseMathType.TOTAL, {"test": 3, "control": 1}),
-            ("unique_users", BaseMathType.DAU, {"test": 1, "control": 1}),
-            ("unique_sessions", BaseMathType.UNIQUE_SESSION, {"test": 2, "control": 1}),
+            ("total_calls", BaseMathType.TOTAL, {"test": 3, "control": 1, BREAKDOWN_NULL_STRING_LABEL: 1}),
+            ("unique_users", BaseMathType.DAU, {"test": 1, "control": 1, BREAKDOWN_NULL_STRING_LABEL: 1}),
+            ("unique_sessions", BaseMathType.UNIQUE_SESSION, {"test": 2, "control": 1, BREAKDOWN_NULL_STRING_LABEL: 1}),
         ]
     )
     def test_trend_by_variant(self, _name: str, math: BaseMathType, expected: dict[str, int]):
+        _create_flag_evaluations(
+            self.team.pk,
+            "probe-flag",
+            timestamp=datetime(2025, 1, 8, 14, tzinfo=UTC),
+            distinct_id="bob",
+            person_id=self.bob_uuid,
+            response=None,
+            properties={"$session_id": "s-bob", "$group_0": "org-b"},
+        )
         query = TrendsQuery(
             dateRange=DATE_RANGE,
             interval=IntervalType.DAY,

@@ -1812,7 +1812,7 @@ def _create_flag_evaluations(
     *,
     distinct_id: str = "evaluator",
     person_id: uuid.UUID | str | None = None,
-    response: str | bool = True,
+    response: str | bool | None = True,
     properties: dict[str, Any] | None = None,
 ) -> None:
     """Insert `count` $feature_flag_called rows for flag_key into flag_evaluations. Unlike _create_event, it writes

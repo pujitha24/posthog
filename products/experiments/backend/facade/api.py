@@ -24,6 +24,8 @@ from products.experiments.backend.health.registry import (
 from products.experiments.backend.hogql_queries.exposure_query_logic import (
     DEFAULT_EXPOSURE_EVENT,
     get_exposure_event_and_property,
+    is_default_exposure_config,
+    normalize_to_exposure_criteria,
     resolve_default_exposure_event,
 )
 from products.experiments.backend.models.experiment import Experiment as ExperimentModel
@@ -162,6 +164,11 @@ def list_ended_experiments_without_conclusion(
     return [EndedExperiment(id=id, name=name, ended_at=ended_at) for id, name, ended_at in rows]
 
 
+def _exposes_on_flag_calls(exposure_criteria: dict | None) -> bool:
+    criteria = normalize_to_exposure_criteria(exposure_criteria)
+    return criteria is None or is_default_exposure_config(criteria.exposure_config)
+
+
 def list_running_experiments(
     *, team_id: int, user_id: int, started_after: datetime | None, started_before: datetime, limit: int
 ) -> list[RunningExperiment]:
@@ -174,10 +181,13 @@ def list_running_experiments(
     ).exclude(deleted=True)
     if started_after is not None:
         experiments = experiments.filter(start_date__gt=started_after)
-    rows = experiments.order_by("-start_date").values_list("id", "name", "start_date", "feature_flag__key")[:limit]
+    rows = experiments.order_by("-start_date").values_list(
+        "id", "name", "start_date", "feature_flag__key", "exposure_criteria"
+    )[:limit]
     return [
         RunningExperiment(id=id, name=name, started_at=started_at, flag_key=flag_key)
-        for id, name, started_at, flag_key in rows
+        for id, name, started_at, flag_key, exposure_criteria in rows
+        if _exposes_on_flag_calls(exposure_criteria)
     ]
 
 

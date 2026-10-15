@@ -62,7 +62,8 @@ export interface notebookSceneLogicMeta {
         breadcrumbs: (
             notebook: NotebookType | null,
             loading: boolean,
-            searchParams: Record<string, any>
+            searchParams: Record<string, any>,
+            featureFlags: FeatureFlagsSet
         ) => Breadcrumb[]
         projectTreeRef: (arg: string) => ProjectTreeRef | null
         sidePanelContext: (notebookId: string, isLocalOnly: boolean) => SidePanelSceneContext | null

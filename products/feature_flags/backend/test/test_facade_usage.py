@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import Any
 
 from posthog.test.base import (
     BaseTest,
@@ -32,7 +33,7 @@ class TestListFlagsCreatedBy(BaseTest):
             team=self.team, key="app-settings", created_by=self.user, is_remote_configuration=True
         )
         now = timezone.now()
-        schedules = {
+        schedules: dict[str, dict[str, Any]] = {
             "pending-change": {"scheduled_at": now + timedelta(days=1)},
             "recurring-change": {"scheduled_at": now - timedelta(days=1), "executed_at": now, "is_recurring": True},
             "done-change": {"scheduled_at": now - timedelta(days=2), "executed_at": now - timedelta(days=1)},

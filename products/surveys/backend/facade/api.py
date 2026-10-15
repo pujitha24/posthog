@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from posthog.hogql import ast
+from posthog.hogql.constants import HogQLGlobalSettings
 from posthog.hogql.query import execute_hogql_query
 
 from posthog.models import Team, User
@@ -14,6 +15,7 @@ from products.surveys.backend.desktop_feedback import (
 from products.surveys.backend.models import Survey
 from products.surveys.backend.responses.fetch_rows import RESPONSE_EVENT_FILTER, SUBMISSION_GROUPING_KEY
 
+QUERY_TIMEOUT_SECONDS = 10
 WEEKLY_RESPONSES = f"""
 SELECT properties.$survey_id AS survey_id,
        uniqIf({SUBMISSION_GROUPING_KEY}, timestamp >= now() - INTERVAL 7 DAY) AS this_week,
@@ -49,6 +51,7 @@ def list_running_survey_responses(team: Team, user: User, *, limit: int) -> list
         query_type="surveys_running_weekly_responses",
         placeholders={"survey_ids": ast.Tuple(exprs=[ast.Constant(value=str(survey_id)) for survey_id, _ in surveys])},
         user=user,
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
     )
     counts = {str(survey_id): (this_week, last_week) for survey_id, this_week, last_week in result.results or []}
     return [

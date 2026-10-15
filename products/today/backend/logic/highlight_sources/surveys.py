@@ -34,4 +34,4 @@ def _candidate(survey: SurveyResponses) -> Candidate:
     )
 
 
-SOURCE = Source(name="surveys", find=find)
+SOURCE = Source(name="surveys", find=find, scopes=("survey:read",))

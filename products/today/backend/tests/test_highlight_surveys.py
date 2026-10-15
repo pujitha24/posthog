@@ -10,7 +10,8 @@ from django.test import SimpleTestCase
 from parameterized import parameterized
 
 from products.surveys.backend.facade.api import SurveyResponses
-from products.today.backend.logic.highlight_sources import load_sources, surveys
+from products.today.backend.logic.highlight_registry import load_sources
+from products.today.backend.logic.highlight_sources import surveys
 from products.today.backend.logic.highlight_types import Context
 
 

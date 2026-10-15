@@ -1638,6 +1638,7 @@ depends_on = [
     "posthog",
     "products.access_control",
     "products.signals",
+    "products.surveys",
     "products.tasks",
 ]
 layer = "modules"

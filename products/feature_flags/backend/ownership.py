@@ -5,6 +5,8 @@ from rest_framework import serializers
 from products.feature_flags.backend.facade.config import detect_config_format
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
+
     from products.feature_flags.backend.models.feature_flag import FeatureFlag
 
 FLAG_OWNER_EXPERIMENT = "experiment"
@@ -67,6 +69,20 @@ def flag_owner_kind(flag: "FeatureFlag") -> str | None:
         if related.exists():
             return kind
     return None
+
+
+def owned_flag_ids(flags: "QuerySet[FeatureFlag]") -> set[int]:
+    relations = {rel.get_accessor_name(): rel for rel in flags.model._meta.related_objects}
+    owned: set[int] = set()
+    for accessor, _kind, manager in _OWNING_ACCESSORS:
+        relation = relations[accessor]
+        objects = getattr(relation.related_model, manager or "_default_manager")
+        owned.update(
+            objects.filter(**{f"{relation.field.name}__in": flags.values("pk")}).values_list(
+                relation.field.attname, flat=True
+            )
+        )
+    return owned
 
 
 def assert_flag_available_for(flag: "FeatureFlag", *, product: str) -> None:

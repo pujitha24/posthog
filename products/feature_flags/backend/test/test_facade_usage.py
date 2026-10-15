@@ -1,0 +1,91 @@
+from datetime import datetime, timedelta
+
+from posthog.test.base import (
+    BaseTest,
+    ClickhouseTestMixin,
+    _create_event,
+    _create_flag_evaluations,
+    _create_person,
+    flush_persons_and_events,
+)
+
+from django.utils import timezone
+
+from parameterized import parameterized
+
+from posthog.models.team import Team
+
+from products.experiments.backend.models.experiment import Experiment
+from products.feature_flags.backend.facade.enums import FlagEvaluationsMode
+from products.feature_flags.backend.facade.usage import FlagCalls, list_flags_created_by, summarize_flag_calls
+from products.feature_flags.backend.models.feature_flag import FeatureFlag
+from products.feature_flags.backend.models.organization_feature_flags_config import OrganizationFeatureFlagsConfig
+
+
+class TestListFlagsCreatedBy(BaseTest):
+    def test_lists_only_the_live_flags_the_person_created_in_this_project(self) -> None:
+        mine = FeatureFlag.objects.create(team=self.team, key="checkout", created_by=self.user)
+        owned = FeatureFlag.objects.create(team=self.team, key="pricing-test", created_by=self.user)
+        Experiment.objects.create(team=self.team, name="Pricing", feature_flag=owned)
+        FeatureFlag.objects.create(team=self.team, key="deleted", created_by=self.user, deleted=True)
+        FeatureFlag.objects.create(team=self.team, key="theirs", created_by=self._create_user("other@example.com"))
+        FeatureFlag.objects.create(
+            team=Team.objects.create(organization=self.organization), key="elsewhere", created_by=self.user
+        )
+
+        flags = list_flags_created_by(self.team.id, self.user.id, limit=10)
+
+        self.assertEqual(
+            [(f.id, f.key, f.owned) for f in flags], [(mine.id, "checkout", False), (owned.id, "pricing-test", True)]
+        )
+
+
+class TestSummarizeFlagCalls(ClickhouseTestMixin, BaseTest):
+    def _ago(self, days: int) -> datetime:
+        return timezone.now() - timedelta(days=days)
+
+    @parameterized.expand(
+        [
+            ("events in events mode", FlagEvaluationsMode.EVENTS, "events", True),
+            (
+                "flag evaluations in flag evaluations mode",
+                FlagEvaluationsMode.FLAG_EVALUATIONS_ONLY,
+                "flag_evaluations",
+                True,
+            ),
+            ("events in flag evaluations mode", FlagEvaluationsMode.FLAG_EVALUATIONS_ONLY, "events", False),
+        ]
+    )
+    def test_counts_calls_where_the_organization_reads_them(
+        self, _name: str, mode: FlagEvaluationsMode, written_to: str, counted: bool
+    ) -> None:
+        OrganizationFeatureFlagsConfig.objects.update_or_create(
+            organization=self.organization, defaults={"flag_evaluations_mode": mode}
+        )
+        for distinct_id, days in [("user-1", 2), ("user-2", 3), ("user-3", 10)]:
+            person = _create_person(team=self.team, distinct_ids=[distinct_id])
+            if written_to == "events":
+                _create_event(
+                    team=self.team,
+                    event="$feature_flag_called",
+                    distinct_id=distinct_id,
+                    properties={"$feature_flag": "checkout", "$feature_flag_response": True},
+                    timestamp=self._ago(days),
+                )
+            else:
+                _create_flag_evaluations(
+                    self.team.id, "checkout", timestamp=self._ago(days), distinct_id=distinct_id, person_id=person.uuid
+                )
+        flush_persons_and_events()
+
+        summary = summarize_flag_calls(self.team, self.user)
+
+        expected = FlagCalls(
+            people_this_week=2,
+            people_last_week=1,
+            calls_this_week=2,
+            calls=3,
+            values_this_week=1,
+            value_this_week="true",
+        )
+        self.assertEqual((dict(summary.by_key), summary.complete), ({"checkout": expected} if counted else {}, True))

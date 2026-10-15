@@ -22,8 +22,8 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
 
     @parameterized.expand(
         [
-            ("an unrestricted viewer", False, {"signup_event": (7.0, 7.0), "activity_event": (2.0, 2.0)}),
-            ("a viewer who cannot read the browser", True, {"signup_event": (0.0, 0.0), "activity_event": (2.0, 2.0)}),
+            ("an unrestricted viewer", False, {"signup_event": (7.0, 7.0), "activity_event": (2.0, 1.0)}),
+            ("a viewer who cannot read the browser", True, {"signup_event": (0.0, 0.0), "activity_event": (2.0, 1.0)}),
         ]
     )
     def test_key_metrics_count_filtered_events_and_weekly_unique_people(
@@ -56,10 +56,9 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
         config.activity_event = {"kind": "EventsNode", "event": "opened_file"}
         config.payment_event = {"kind": "ActionsNode", "id": 999_999}
         config.save()
-        for browser in ("Chrome", "Firefox"):
+        for browser, days in (("Chrome", 20), ("Firefox", 7)):
             create_person(team=self.team, distinct_ids=[f"person-{browser}"])
-        for day in range(1, 21):
-            for browser in ("Chrome", "Firefox"):
+            for day in range(1, days + 1):
                 _create_event(
                     team=self.team,
                     event="opened_file",

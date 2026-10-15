@@ -19,116 +19,119 @@ from posthog.models import Team, User
 from products.actions.backend.facade.api import action_filter_conditions
 from products.customer_analytics.backend.facade.contracts import KeyMetric
 
-KEY_METRICS = (
-    ("signup_event", "Sign-ups", False),
-    ("payment_event", "Payments", False),
-    ("subscription_event", "Subscriptions", False),
-    ("activity_event", "Active users", True),
-)
+KEY_METRICS = {
+    "signup_event": "Sign-ups",
+    "payment_event": "Payments",
+    "subscription_event": "Subscriptions",
+    "activity_event": "Active users",
+}
+PEOPLE_METRIC = "activity_event"
 DAYS = 35
 QUERY_TIMEOUT_SECONDS = 10
-DAILY = "SELECT toDate(timestamp) AS day FROM events WHERE timestamp >= toStartOfDay(now()) - INTERVAL {days} DAY AND timestamp < toStartOfDay(now()) AND {match} GROUP BY day ORDER BY day"
-WEEKLY = "SELECT 1 FROM events WHERE timestamp >= toStartOfDay(now()) - INTERVAL 14 DAY AND timestamp < toStartOfDay(now()) AND {match}"
-THIS_WEEK = "timestamp >= toStartOfDay(now()) - INTERVAL 7 DAY"
+DAILY = (
+    "SELECT toDate(timestamp) AS day FROM events"
+    " WHERE timestamp >= toStartOfDay(now()) - INTERVAL {days} DAY AND timestamp < toStartOfDay(now()) AND {match}"
+    " GROUP BY day ORDER BY day"
+)
+WEEKLY_PEOPLE = (
+    "SELECT uniqIf(person_id, timestamp >= toStartOfDay(now()) - INTERVAL 7 DAY),"
+    " uniqIf(person_id, timestamp < toStartOfDay(now()) - INTERVAL 7 DAY) FROM events"
+    " WHERE timestamp >= toStartOfDay(now()) - INTERVAL 14 DAY AND timestamp < toStartOfDay(now()) AND {match}"
+)
+
+
+def _configured_nodes(team: Team) -> dict[str, dict[str, Any]]:
+    config = team.customer_analytics_config
+    return {
+        key: node
+        for key in KEY_METRICS
+        if isinstance(node := getattr(config, key), dict) and node.get("kind") in ("EventsNode", "ActionsNode")
+    }
+
+
+def _action_conditions(team: Team, nodes: dict[str, dict[str, Any]]) -> dict[int, ast.Expr]:
+    return action_filter_conditions(
+        team=team, action_ids=[int(node["id"]) for node in nodes.values() if node["kind"] == "ActionsNode"]
+    )
+
+
+def _condition(node: dict[str, Any], team: Team, actions: dict[int, ast.Expr]) -> ast.Expr:
+    if node["kind"] == "ActionsNode":
+        match = clone_expr(actions[int(node["id"])])
+    elif node.get("event"):
+        match = parse_expr("event = {event}", placeholders={"event": ast.Constant(value=node["event"])})
+    else:
+        match = ast.Constant(value=True)
+    if node.get("properties"):
+        return ast.And(exprs=[match, property_to_expr(node["properties"], team)])
+    return match
+
+
+def _select(query: str, **placeholders: ast.Expr) -> ast.SelectQuery:
+    return cast(ast.SelectQuery, parse_select(query, placeholders=placeholders))
+
+
+def _run(query: ast.SelectQuery, team: Team, user: User, query_type: str) -> list[Any]:
+    return execute_hogql_query(
+        query,
+        team,
+        query_type=query_type,
+        user=user,
+        modifiers=HogQLQueryModifiers(convertToProjectTimezone=True),
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
+    ).results
 
 
 def key_metrics_fingerprint(team: Team) -> str:
-    config = team.customer_analytics_config
-    nodes = {key: getattr(config, key, None) for key, _name, _people in KEY_METRICS}
-    action_ids = [
-        int(node["id"]) for node in nodes.values() if isinstance(node, dict) and node.get("kind") == "ActionsNode"
-    ]
-    actions = {
-        action_id: repr(condition)
-        for action_id, condition in action_filter_conditions(team=team, action_ids=action_ids).items()
-    }
+    nodes = _configured_nodes(team)
+    actions = {action_id: repr(condition) for action_id, condition in _action_conditions(team, nodes).items()}
     return hashlib.sha256(json.dumps([nodes, actions], sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 def key_metrics(team: Team, user: User) -> list[KeyMetric]:
-    config = team.customer_analytics_config
-    nodes: list[tuple[str, str, bool, dict[str, Any]]] = [
-        (key, node.get("custom_name") or name, people, node)
-        for key, name, people in KEY_METRICS
-        if isinstance(node := getattr(config, key, None), dict) and node.get("kind") in ("EventsNode", "ActionsNode")
-    ]
-    actions = action_filter_conditions(
-        team=team, action_ids=[int(node["id"]) for *_, node in nodes if node["kind"] == "ActionsNode"]
-    )
-    nodes = [entry for entry in nodes if entry[3]["kind"] != "ActionsNode" or int(entry[3]["id"]) in actions]
-    if not nodes:
+    nodes = _configured_nodes(team)
+    actions = _action_conditions(team, nodes)
+    conditions = {
+        key: _condition(node, team, actions)
+        for key, node in nodes.items()
+        if node["kind"] == "EventsNode" or int(node["id"]) in actions
+    }
+    if not conditions:
         return []
 
-    def condition(node: dict[str, Any]) -> ast.Expr:
-        if node["kind"] == "ActionsNode":
-            match: ast.Expr = clone_expr(actions[int(node["id"])])
-        elif node.get("event"):
-            match = ast.CompareOperation(
-                op=ast.CompareOperationOp.Eq, left=ast.Field(chain=["event"]), right=ast.Constant(value=node["event"])
-            )
-        else:
-            match = ast.Constant(value=True)
-        if node.get("properties"):
-            match = ast.And(exprs=[match, property_to_expr(node["properties"], team)])
-        return match
-
-    daily = _select(DAILY, {"days": ast.Constant(value=DAYS), "match": ast.Or(exprs=[condition(n) for *_, n in nodes])})
+    daily = _select(
+        DAILY, days=ast.Constant(value=DAYS), match=ast.Or(exprs=[clone_expr(c) for c in conditions.values()])
+    )
     daily.select.extend(
         ast.Alias(
-            alias=f"m{index}",
-            expr=ast.Call(name="uniqIf", args=[ast.Field(chain=["person_id"]), condition(node)])
-            if people
-            else ast.Call(name="countIf", args=[condition(node)]),
+            alias=key,
+            expr=parse_expr(
+                "uniqIf(person_id, {match})" if key == PEOPLE_METRIC else "countIf({match})",
+                placeholders={"match": clone_expr(condition)},
+            ),
         )
-        for index, (_key, _name, people, node) in enumerate(nodes)
+        for key, condition in conditions.items()
     )
-    by_day = {row[0]: row[1:] for row in _rows(daily, team, user, "customer_analytics_key_metrics_daily")}
-    weekly_people = iter(_weekly_people(team, user, [condition(node) for _key, _name, people, node in nodes if people]))
+    by_day = {row[0]: row[1:] for row in _run(daily, team, user, "customer_analytics_key_metrics_daily")}
 
     today = timezone.now().astimezone(team.timezone_info).date()
     days = [today - timedelta(days=offset) for offset in range(DAYS, 0, -1)]
     metrics = []
-    for index, (key, name, people, _node) in enumerate(nodes):
+    for index, (key, condition) in enumerate(conditions.items()):
         points = [(day, float(by_day[day][index]) if day in by_day else 0.0) for day in days]
-        if people:
-            this_week, last_week = next(weekly_people), next(weekly_people)
+        if key == PEOPLE_METRIC:
+            weekly = _run(_select(WEEKLY_PEOPLE, match=condition), team, user, "customer_analytics_key_metrics_weekly")
+            this_week, last_week = (float(value) for value in weekly[0])
         else:
             this_week, last_week = sum(v for _, v in points[-7:]), sum(v for _, v in points[-14:-7])
         metrics.append(
-            KeyMetric(key=key, name=name, people=people, daily=points, this_week=this_week, last_week=last_week)
+            KeyMetric(
+                key=key,
+                name=nodes[key].get("custom_name") or KEY_METRICS[key],
+                people=key == PEOPLE_METRIC,
+                daily=points,
+                this_week=this_week,
+                last_week=last_week,
+            )
         )
     return metrics
-
-
-def _weekly_people(team: Team, user: User, conditions: list[ast.Expr]) -> list[float]:
-    if not conditions:
-        return []
-    weekly = _select(WEEKLY, {"match": ast.Or(exprs=[clone_expr(c) for c in conditions])})
-    weekly.select = [
-        ast.Call(
-            name="uniqIf",
-            args=[ast.Field(chain=["person_id"]), ast.And(exprs=[clone_expr(c), period])],
-        )
-        for c in conditions
-        for period in (parse_expr(THIS_WEEK), ast.Not(expr=parse_expr(THIS_WEEK)))
-    ]
-    rows = _rows(weekly, team, user, "customer_analytics_key_metrics_weekly")
-    return [float(value) for value in rows[0]] if rows else [0.0] * (2 * len(conditions))
-
-
-def _select(query: str, placeholders: dict[str, ast.Expr]) -> ast.SelectQuery:
-    return cast(ast.SelectQuery, parse_select(query, placeholders=placeholders))
-
-
-def _rows(query: ast.SelectQuery, team: Team, user: User, name: str) -> list[list]:
-    return (
-        execute_hogql_query(
-            query,
-            team,
-            query_type=name,
-            user=user,
-            modifiers=HogQLQueryModifiers(convertToProjectTimezone=True),
-            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
-        ).results
-        or []
-    )

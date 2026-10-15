@@ -78,6 +78,7 @@ import {
     stateToRRule,
 } from '../Workflows/hogflows/steps/components/rrule-helpers'
 import type { UtmTagValues } from '../Workflows/hogflows/steps/components/UtmTagFields'
+import { keepOnlyRealtimeCohort } from '../Workflows/hogflows/steps/realtimeCohortStatus'
 import { recipientEmailProperty } from '../Workflows/hogflows/steps/recipientEmail'
 import { ResourceSaveQueue } from '../Workflows/resourceSaveQueue'
 import { audienceCohortIds, audienceCohortLaunchError, toAudienceCohort } from './audience/audienceList'
@@ -1326,6 +1327,13 @@ export const broadcastWizardLogic = kea<broadcastWizardLogicType>([
     }),
 
     listeners(({ actions, values, props, cache }) => ({
+        loadBlastRadiusSuccess: ({ blastRadius }) => {
+            // A realtime cohort has to be the only condition, so picking one replaces the others.
+            const mixed = blastRadius?.realtime_cohort_with_other_conditions
+            if (mixed) {
+                actions.setAudienceProperties(keepOnlyRealtimeCohort(values.audienceProperties, mixed.id))
+            }
+        },
         applyDefaultSender: () => {
             // Only fills an empty sender on a broadcast that is still being written. It is not an
             // edit, so it does not autosave; the next save or launch carries it.

@@ -24,6 +24,10 @@ from products.warehouse_sources.backend.presentation.views.external_data_source.
     ExternalDataSourceSerializers,
 )
 from products.warehouse_sources.backend.temporal.data_imports.cdc.companion_jobs import COMPANION_JOB_IDS_KEY
+from products.warehouse_sources.backend.temporal.data_imports.external_data_job import (
+    CANCELLED_RUN_MESSAGE,
+    WORKER_RESTART_ERROR_MESSAGE,
+)
 
 
 class TestWarehouseSourcesFacade(BaseTest):
@@ -582,17 +586,35 @@ class TestListFailingSources(BaseTest):
             ("someone else created it", {"created_by": "other"}, [("Failed", 1)]),
             ("it is deleted", {"deleted": True}, [("Failed", 1)]),
             ("it is in another project", {"team": "other"}, [("Failed", 1)]),
+            ("a person cancelled its run", {}, [("Failed", 1, ExternalDataJob.USER_CANCELLED_ERROR)]),
+            ("a newer run replaced its run", {}, [("Failed", 1, CANCELLED_RUN_MESSAGE)]),
+            ("restarts interrupted its run", {}, [("Failed", 1, WORKER_RESTART_ERROR_MESSAGE)]),
         ]
     )
     def test_leaves_out_a_source_when(
-        self, _name: str, fields: dict[str, object], runs: list[tuple[str, float]]
+        self, _name: str, fields: dict[str, object], runs: list[tuple[str, float] | tuple[str, float, str]]
     ) -> None:
         if fields.get("created_by") == "other":
             fields = {**fields, "created_by": self._create_user("other@example.com")}
         if fields.get("team") == "other":
             fields = {"team_id": Team.objects.create(organization=self.organization, name="other").pk}
         source = self._source(**fields)
-        for status, days_ago in runs:
-            self._run(source, "invoices", status, days_ago, "failed")
+        for status, days_ago, *error in runs:
+            self._run(source, "invoices", status, days_ago, error[0] if error else "failed")
 
         assert self._failing() == []
+
+    def test_counts_only_the_failures_a_cancellation_did_not_cause(self) -> None:
+        source = self._source(prefix="app_")
+        self._run(source, "orders", "Failed", 2, ExternalDataJob.USER_CANCELLED_ERROR)
+        self._run(source, "orders", "Failed", 1, "timeout")
+
+        assert self._failing() == [
+            contracts.FailingSource(
+                source_id=source.id,
+                source_type="Postgres",
+                source_label="app_",
+                failures=1,
+                latest_error="timeout",
+            )
+        ]

@@ -20,6 +20,10 @@ def list_failing_sources(
     from products.warehouse_sources.backend.temporal.data_imports.cdc.companion_jobs import (  # noqa: PLC0415 -- the cdc package imports pyarrow, which the facade path does not load
         COMPANION_JOB_IDS_KEY,
     )
+    from products.warehouse_sources.backend.temporal.data_imports.external_data_job import (  # noqa: PLC0415 -- the import workflow module loads pyarrow, which the facade path does not load
+        CANCELLED_RUN_MESSAGE,
+        WORKER_RESTART_ERROR_MESSAGE,
+    )
 
     sources = {
         source.id: source
@@ -39,6 +43,9 @@ def list_failing_sources(
         )
         .exclude(schema__deleted=True)
         .exclude(schema__should_sync=False, schema__auto_disabled_at__isnull=True)
+        .exclude(
+            latest_error__in=[ExternalDataJob.USER_CANCELLED_ERROR, CANCELLED_RUN_MESSAGE, WORKER_RESTART_ERROR_MESSAGE]
+        )
         .values_list("id", "schema_id", "latest_error", "schema_snapshot__companion_of")
     )
     current_companions = {

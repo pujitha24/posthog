@@ -1831,12 +1831,16 @@ export const broadcastWizardLogic = kea<broadcastWizardLogicType>([
                         await hogFlowsSchedulesDestroy(projectId, broadcastId, id)
                     }
                     activated = await activate()
-                    await hogFlowsBatchJobsCreate(projectId, broadcastId, {
+                    const batchJob = await hogFlowsBatchJobsCreate(projectId, broadcastId, {
                         hog_flow: broadcastId,
                         variables: {},
                         confirm_token: blastRadius.confirm_token,
                     } as any)
-                    lemonToast.success('Broadcast is sending')
+                    lemonToast.success(
+                        batchJob.status === 'waiting'
+                            ? 'Broadcast will send once its cohort finishes calculating'
+                            : 'Broadcast is sending'
+                    )
                 } else {
                     const schedule: Partial<HogFlowScheduleApi> = {
                         rrule:

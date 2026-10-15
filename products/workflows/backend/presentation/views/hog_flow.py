@@ -136,6 +136,7 @@ from products.workflows.backend.facade.activity import (
     resume_workflow_email_sending,
 )
 from products.workflows.backend.facade.batch_jobs import (
+    cancel_waiting_batch_job,
     create_batch_job,
     get_batch_job,
     list_batch_jobs,
@@ -977,6 +978,21 @@ class BlastRadiusRequestSerializer(serializers.Serializer):
     )
 
 
+class RealtimeCohortStatusSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="The realtime cohort the audience sends to.")
+    name = serializers.CharField(help_text="The cohort's name.")
+    state = serializers.ChoiceField(
+        choices=["ready", "building", "rebuilding", "needs_attention"],
+        help_text=(
+            "'ready' when the cohort's membership is calculated. 'building' or 'rebuilding' while it is "
+            "still calculating, when a send waits for it. 'needs_attention' when its calculation is stuck."
+        ),
+    )
+    percent_complete = serializers.IntegerField(
+        allow_null=True, help_text="How far the calculation has come, while the cohort is not ready."
+    )
+
+
 class BlastRadiusSerializer(serializers.Serializer):
     affected = serializers.IntegerField(help_text="Number of users matching the filters")
     total = serializers.IntegerField(help_text="Total number of users")
@@ -990,6 +1006,14 @@ class BlastRadiusSerializer(serializers.Serializer):
         help_text=(
             "Proof this audience was previewed: pass it to the batch dispatch (confirm_token) after "
             "echoing 'affected' to the user. Signs these exact filters; expires in 15 minutes."
+        ),
+    )
+    realtime_cohort = RealtimeCohortStatusSerializer(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Set when the audience is one realtime cohort. 'affected' is then the cohort's last calculated "
+            "size, and a batch run waits until the cohort is ready."
         ),
     )
 
@@ -1375,15 +1399,7 @@ class HogFlowActionSerializer(serializers.Serializer):
                         )
                     }
                 )
-            if not realtime_cohort.ready:
-                raise serializers.ValidationError(
-                    {
-                        "filters": (
-                            f"Cohort '{realtime_cohort.name}' isn't ready yet. You can send to it once it "
-                            "finishes calculating."
-                        )
-                    }
-                )
+            # A cohort that is still calculating is accepted: a batch run waits until it is ready.
             return
 
         cohort_name = find_behavioral_cohort_name(project_id, cohort_ids)
@@ -5892,6 +5908,16 @@ class HogFlowViewSet(
                     "confirm_token": mint_audience_confirm_token(
                         self.team_id, filters, group_type_index, size.dedupe_key
                     ),
+                    "realtime_cohort": (
+                        {
+                            "id": size.realtime_cohort.id,
+                            "name": size.realtime_cohort.name,
+                            "state": size.realtime_cohort.state,
+                            "percent_complete": size.realtime_cohort.percent_complete,
+                        }
+                        if size.realtime_cohort
+                        else None
+                    ),
                 }
             ).data
         )
@@ -6433,6 +6459,11 @@ class HogFlowViewSet(
         }
         if batch_job.status not in non_terminal:
             return Response({"status": batch_job.status, "marked": 0, "remaining": 0, "done": True})
+        if batch_job.status == HogFlowBatchJobState.WAITING and cancel_waiting_batch_job(
+            team_id=self.team_id, batch_job_id=batch_job.id
+        ):
+            # A run that waits for its realtime cohort was never dispatched, so there is nothing to stop.
+            return Response({"status": HogFlowBatchJobState.CANCELLED, "marked": 0, "remaining": 0, "done": True})
 
         # One CDP call flags a bounded chunk of rows; a large batch needs several. Same
         # shape as cancel_invocations — `done: false` after the cap tells the caller to

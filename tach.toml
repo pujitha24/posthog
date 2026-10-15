@@ -1639,6 +1639,7 @@ depends_on = [
     "products.access_control",
     "products.signals",
     "products.tasks",
+    "products.workflows",
 ]
 layer = "modules"
 

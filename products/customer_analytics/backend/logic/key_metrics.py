@@ -30,13 +30,15 @@ DAYS = 35
 QUERY_TIMEOUT_SECONDS = 10
 DAILY = (
     "SELECT toDate(timestamp) AS day FROM events"
-    " WHERE timestamp >= toStartOfDay(now()) - INTERVAL {days} DAY AND timestamp < toStartOfDay(now()) AND {match}"
+    " WHERE timestamp >= toStartOfDay(now()) - INTERVAL {days} DAY AND timestamp < toStartOfDay(now())"
+    " AND {match} AND {test_accounts}"
     " GROUP BY day ORDER BY day"
 )
 WEEKLY_PEOPLE = (
     "SELECT uniqIf(person_id, timestamp >= toStartOfDay(now()) - INTERVAL 7 DAY),"
     " uniqIf(person_id, timestamp < toStartOfDay(now()) - INTERVAL 7 DAY) FROM events"
-    " WHERE timestamp >= toStartOfDay(now()) - INTERVAL 14 DAY AND timestamp < toStartOfDay(now()) AND {match}"
+    " WHERE timestamp >= toStartOfDay(now()) - INTERVAL 14 DAY AND timestamp < toStartOfDay(now())"
+    " AND {match} AND {test_accounts}"
 )
 
 
@@ -85,7 +87,8 @@ def _run(query: ast.SelectQuery, team: Team, user: User, query_type: str) -> lis
 def key_metrics_fingerprint(team: Team) -> str:
     nodes = _configured_nodes(team)
     actions = {action_id: repr(condition) for action_id, condition in _action_conditions(team, nodes).items()}
-    return hashlib.sha256(json.dumps([nodes, actions], sort_keys=True, default=str).encode()).hexdigest()[:16]
+    payload = [nodes, actions, team.test_account_filters]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 def key_metrics(team: Team, user: User) -> list[KeyMetric]:
@@ -98,9 +101,13 @@ def key_metrics(team: Team, user: User) -> list[KeyMetric]:
     }
     if not conditions:
         return []
+    test_accounts = property_to_expr(team.test_account_filters or [], team)
 
     daily = _select(
-        DAILY, days=ast.Constant(value=DAYS), match=ast.Or(exprs=[clone_expr(c) for c in conditions.values()])
+        DAILY,
+        days=ast.Constant(value=DAYS),
+        match=ast.Or(exprs=[clone_expr(c) for c in conditions.values()]),
+        test_accounts=clone_expr(test_accounts),
     )
     daily.select.extend(
         ast.Alias(
@@ -120,7 +127,8 @@ def key_metrics(team: Team, user: User) -> list[KeyMetric]:
     for index, (key, condition) in enumerate(conditions.items()):
         points = [(day, float(by_day[day][index]) if day in by_day else 0.0) for day in days]
         if key == PEOPLE_METRIC:
-            weekly = _run(_select(WEEKLY_PEOPLE, match=condition), team, user, "customer_analytics_key_metrics_weekly")
+            weekly_query = _select(WEEKLY_PEOPLE, match=condition, test_accounts=clone_expr(test_accounts))
+            weekly = _run(weekly_query, team, user, "customer_analytics_key_metrics_weekly")
             this_week, last_week = (float(value) for value in weekly[0])
         else:
             this_week, last_week = sum(v for _, v in points[-7:]), sum(v for _, v in points[-14:-7])

@@ -22,13 +22,30 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
 
     @parameterized.expand(
         [
-            ("an unrestricted viewer", False, {"signup_event": (7.0, 7.0), "activity_event": (2.0, 1.0)}),
-            ("a viewer who cannot read the browser", True, {"signup_event": (0.0, 0.0), "activity_event": (2.0, 1.0)}),
+            ("an unrestricted viewer", False, [], {"signup_event": (7.0, 7.0), "activity_event": (2.0, 1.0)}),
+            (
+                "a viewer who cannot read the browser",
+                True,
+                [],
+                {"signup_event": (0.0, 0.0), "activity_event": (2.0, 1.0)},
+            ),
+            (
+                "a project that marks Chrome as a test account",
+                False,
+                [{"key": "$browser", "value": "Chrome", "operator": "is_not", "type": "event"}],
+                {"signup_event": (0.0, 0.0), "activity_event": (1.0, 0.0)},
+            ),
         ]
     )
     def test_key_metrics_count_filtered_events_and_weekly_unique_people(
-        self, _name: str, restricted: bool, expected: dict[str, tuple[float, float]]
+        self,
+        _name: str,
+        restricted: bool,
+        test_account_filters: list[dict[str, str]],
+        expected: dict[str, tuple[float, float]],
     ) -> None:
+        self.team.test_account_filters = test_account_filters
+        self.team.save()
         self.organization.available_product_features = [
             {"key": AvailableFeature.PROPERTY_ACCESS_CONTROL, "name": AvailableFeature.PROPERTY_ACCESS_CONTROL}
         ]
@@ -75,7 +92,7 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
             (expected, {"signup_event": 35, "activity_event": 35}),
         )
 
-    def test_the_fingerprint_changes_when_a_referenced_action_changes_or_goes(self) -> None:
+    def test_the_fingerprint_changes_when_an_action_or_the_test_account_filters_change(self) -> None:
         action = Action.objects.create(team=self.team, name="Paid", steps_json=[{"event": "paid"}])
         config = self.team.customer_analytics_config
         config.payment_event = {"kind": "ActionsNode", "id": action.id}
@@ -87,5 +104,10 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
         action.deleted = True
         action.save()
         prints.append(get_key_metrics_fingerprint(self.team))
+        self.team.test_account_filters = [
+            {"key": "email", "value": "@example.com", "operator": "not_icontains", "type": "person"}
+        ]
+        self.team.save()
+        prints.append(get_key_metrics_fingerprint(self.team))
 
-        self.assertEqual(len(set(prints)), 3)
+        self.assertEqual(len(set(prints)), 4)

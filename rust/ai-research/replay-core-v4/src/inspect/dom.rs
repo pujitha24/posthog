@@ -14,6 +14,8 @@ use crate::scan::tokens::{Token, Tokens};
 
 /// Node ids tracked per window. A larger page stops orphan counting for the window and sets `node_cap_reached`.
 pub const MAX_TRACKED_NODES: usize = 200_000;
+/// Remote image URLs kept per event, as the v3 collector caps URLs per message.
+pub const MAX_IMAGE_URLS: usize = 512;
 
 const TEXT_NODE: f64 = 3.0;
 
@@ -28,6 +30,8 @@ struct WindowDom {
 #[derive(Default)]
 pub struct DomInspector {
     windows: HashMap<String, WindowDom>,
+    /// Remote image URLs seen since the last `take_image_urls`.
+    image_urls: Vec<String>,
 }
 
 /// What one walk over serialized nodes found.
@@ -42,6 +46,7 @@ struct Walk {
     canvases: u32,
     videos: u32,
     shadow_roots: u32,
+    image_urls: Vec<String>,
 }
 
 #[derive(Default)]
@@ -54,6 +59,9 @@ struct NodeFrame {
     rel_stylesheet: bool,
     href: bool,
     inline_css: bool,
+    src: Option<Span>,
+    srcset: Option<Span>,
+    poster: Option<Span>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,6 +134,9 @@ fn walk_nodes(bytes: &[u8], span: Span, walk: &mut Walk) {
                         }
                         b"href" => node.href = true,
                         b"_cssText" => node.inline_css = true,
+                        b"src" => node.src = Some(value),
+                        b"srcset" => node.srcset = Some(value),
+                        b"poster" => node.poster = Some(value),
                         _ => {}
                     }
                 }
@@ -156,6 +167,24 @@ fn attribute_contains(bytes: &[u8], value: Span, word: &str) -> bool {
         && scan::unescape(bytes, value).is_ok_and(|v| v.to_ascii_lowercase().contains(word))
 }
 
+fn add_url(bytes: &[u8], value: Option<Span>, walk: &mut Walk) {
+    if let Some(url) = value
+        .filter(|&v| scan::is_string(bytes, v))
+        .and_then(|v| scan::unescape(bytes, v).ok())
+    {
+        push_url(&url, walk);
+    }
+}
+
+/// Keeps remote URLs only: an inline image is moved out of the block by the image scan instead.
+fn push_url(url: &str, walk: &mut Walk) {
+    if walk.image_urls.len() < MAX_IMAGE_URLS
+        && (url.starts_with("https://") || url.starts_with("http://"))
+    {
+        walk.image_urls.push(url.to_owned());
+    }
+}
+
 fn finish_node(bytes: &[u8], node: NodeFrame, walk: &mut Walk) {
     walk.nodes += 1;
     if let Some(id) = node.id {
@@ -172,6 +201,20 @@ fn finish_node(bytes: &[u8], node: NodeFrame, walk: &mut Walk) {
         .tag
         .and_then(|t| scan::unescape(bytes, t).ok())
         .map(|t| t.to_ascii_lowercase());
+    if matches!(tag.as_deref(), Some("img" | "image" | "source" | "input")) {
+        add_url(bytes, node.src, walk);
+        if let Some(srcset) = node.srcset.and_then(|s| scan::unescape(bytes, s).ok()) {
+            // A srcset is a comma-separated list of `url descriptor` candidates.
+            for candidate in srcset.split(',') {
+                if let Some(url) = candidate.split_whitespace().next() {
+                    push_url(url, walk);
+                }
+            }
+        }
+    }
+    if tag.as_deref() == Some("video") {
+        add_url(bytes, node.poster, walk);
+    }
     match tag.as_deref() {
         Some("link") if node.inline_css => walk.inline_stylesheets += 1,
         Some("link") if node.rel_stylesheet && node.href => walk.remote_stylesheets += 1,
@@ -231,13 +274,16 @@ impl DomInspector {
                     stats.canvases += walk.canvases;
                     stats.videos += walk.videos;
                     stats.shadow_roots += walk.shadow_roots;
+                    self.image_urls.extend(walk.image_urls);
                 }
             }
             (Some(INCREMENTAL_SNAPSHOT), Some(MUTATION))
                 if dom.has_snapshot && !dom.cap_reached =>
             {
                 if let Some(data) = event.data {
-                    let (orphans, size) = observe_mutation(inner, data, event.compressed, dom);
+                    let (orphans, size, urls) =
+                        observe_mutation(inner, data, event.compressed, dom);
+                    self.image_urls.extend(urls);
                     stats.orphan_mutations += orphans;
                     changed = size;
                 }
@@ -249,6 +295,11 @@ impl DomInspector {
         }
         stats.node_cap_reached |= dom.cap_reached;
         changed
+    }
+
+    /// The remote image URLs the DOM referenced since the last call.
+    pub fn take_image_urls(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.image_urls)
     }
 
     /// Whether any window of the session has a full snapshot in this process.
@@ -279,11 +330,17 @@ fn mutation_lists(inner: &[u8], data: Span, compressed: bool) -> Vec<(&'static [
 
 /// Applies a mutation to the window's node set. Returns how many of its changes name a node that is not there, and how
 /// many nodes it added or removed.
-fn observe_mutation(inner: &[u8], data: Span, compressed: bool, dom: &mut WindowDom) -> (u32, u32) {
+fn observe_mutation(
+    inner: &[u8],
+    data: Span,
+    compressed: bool,
+    dom: &mut WindowDom,
+) -> (u32, u32, Vec<String>) {
     let lists = mutation_lists(inner, data, compressed);
     // rrweb does not order adds parent first, so a parent added anywhere in the same mutation counts as present.
     let mut added = HashSet::new();
     let mut parents = Vec::new();
+    let mut urls = Vec::new();
     for (name, bytes) in &lists {
         if *name != b"adds" {
             continue;
@@ -294,6 +351,7 @@ fn observe_mutation(inner: &[u8], data: Span, compressed: bool, dom: &mut Window
                 let mut walk = Walk::default();
                 walk_nodes(bytes, node, &mut walk);
                 added.extend(walk.ids);
+                urls.extend(walk.image_urls);
             }
         }
     }
@@ -321,7 +379,7 @@ fn observe_mutation(inner: &[u8], data: Span, compressed: bool, dom: &mut Window
     }
     let size = added.len() as u32 + removed;
     dom.insert(&added.into_iter().collect::<Vec<_>>());
-    (orphans, size)
+    (orphans, size, urls)
 }
 
 fn items(bytes: &[u8]) -> impl Iterator<Item = Span> + '_ {
@@ -373,6 +431,8 @@ mod tests {
                 {"type": 3, "textContent": "hello", "id": 7},
                 element(8, "iframe", json!({}), json!([])),
                 element(9, "canvas", json!({}), json!([])),
+                element(11, "img", json!({"src": "https://cdn.example.com/a.png", "srcset": "https://cdn.example.com/a@2x.png 2x, data:image/png;base64,AA 3x"}), json!([])),
+                element(12, "video", json!({"poster": "https://cdn.example.com/p.jpg"}), json!([])),
                 {"type": 2, "tagName": "div", "attributes": {}, "childNodes": [], "isShadowHost": true, "id": 10},
             ])),
         ]))], "id": 1}})
@@ -388,11 +448,21 @@ mod tests {
             };
             let message = events(json!([event]));
             let mut stats = BlockStats::default();
-            DomInspector::default().observe(&message.inner, &message.events[0], "w", &mut stats);
+            let mut dom = DomInspector::default();
+            dom.observe(&message.inner, &message.events[0], "w", &mut stats);
+            // Remote image URLs go to the fetcher. The inline image in the srcset is the image scan's to move.
+            assert_eq!(
+                dom.take_image_urls(),
+                [
+                    "https://cdn.example.com/a.png",
+                    "https://cdn.example.com/a@2x.png",
+                    "https://cdn.example.com/p.jpg"
+                ]
+            );
 
             assert_eq!(
                 (stats.dom_nodes, stats.dom_text_chars),
-                (10, 5),
+                (12, 5),
                 "compressed: {compressed}"
             );
             assert_eq!((stats.remote_stylesheets, stats.inline_stylesheets), (1, 1));
@@ -403,7 +473,7 @@ mod tests {
                     stats.videos,
                     stats.shadow_roots
                 ),
-                (1, 1, 0, 1)
+                (1, 1, 1, 1)
             );
             assert_eq!(stats.events_before_first_full_snapshot, 0);
         }

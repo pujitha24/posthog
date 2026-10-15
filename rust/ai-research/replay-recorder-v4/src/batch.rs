@@ -25,6 +25,8 @@ pub struct Block {
     pub messages: Vec<Message>,
     pub stats: BlockStats,
     pub moments: Vec<Moment>,
+    /// Remote image URLs the block's DOM referenced.
+    pub image_urls: Vec<String>,
 }
 
 pub struct Batch {
@@ -111,12 +113,13 @@ impl Inspectors {
                     inspector.observe(&mut block, &message.inner, event, window);
                 }
             }
-            let (stats, moments) = block.finish();
+            let inspected = block.finish();
             blocks.push(Block {
                 session,
                 messages: pending.messages,
-                stats,
-                moments,
+                stats: inspected.stats,
+                moments: inspected.moments,
+                image_urls: inspected.image_urls,
             });
         }
         (blocks, batch.offsets)

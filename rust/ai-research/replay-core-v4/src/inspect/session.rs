@@ -42,12 +42,25 @@ pub struct SessionInspector {
 pub struct BlockInspection {
     counter: EventCounter,
     moments: Vec<Moment>,
+    image_urls: Vec<String>,
     events: u32,
 }
 
+/// What the inspector learned about one block.
+pub struct Inspected {
+    pub stats: BlockStats,
+    pub moments: Vec<Moment>,
+    /// Remote image URLs the block's DOM referenced, for the image fetcher.
+    pub image_urls: Vec<String>,
+}
+
 impl BlockInspection {
-    pub fn finish(self) -> (BlockStats, Vec<Moment>) {
-        (self.counter.finish(), self.moments)
+    pub fn finish(self) -> Inspected {
+        Inspected {
+            stats: self.counter.finish(),
+            moments: self.moments,
+            image_urls: self.image_urls,
+        }
     }
 }
 
@@ -73,6 +86,7 @@ impl SessionInspector {
         let changed = self
             .dom
             .observe(inner, event, window, &mut block.counter.stats);
+        block.image_urls.extend(self.dom.take_image_urls());
         if event.kind == Some(FULL_SNAPSHOT) {
             self.cold = false;
         }
@@ -156,7 +170,8 @@ mod tests {
         for event in &message.events {
             session.observe(&mut block, &message.inner, event, "w");
         }
-        block.finish()
+        let inspected = block.finish();
+        (inspected.stats, inspected.moments)
     }
 
     fn big_mutation(ts: i64) -> Value {

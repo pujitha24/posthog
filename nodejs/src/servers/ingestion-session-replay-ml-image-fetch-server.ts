@@ -72,13 +72,25 @@ const POOL_MAX_BATCHES_IN_FLIGHT_PER_MEMBER = 4
 /** Matches MAX_URL_LEN in the crate, which is what the collector applied to the first candidate. */
 const MAX_REDIRECT_URL_LENGTH = 2048
 
-const BLOCKED_IMAGE_FETCH_DEAD_LETTER_TOPICS = [
-    KAFKA_SESSION_REPLAY_IMAGE_FETCH,
-    KAFKA_SESSION_REPLAY_IMAGE_SCRUB,
-    KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_1M,
-    KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_10M,
-    KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_1H,
-]
+/** The topics one image fetch lane reads and writes: its frontier and the three delay tiers it relays through. */
+export interface ImageFetchLane {
+    frontier: string
+    retry1m: string
+    retry10m: string
+    retry1h: string
+}
+
+export const V3_IMAGE_FETCH_LANE: ImageFetchLane = {
+    frontier: KAFKA_SESSION_REPLAY_IMAGE_FETCH,
+    retry1m: KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_1M,
+    retry10m: KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_10M,
+    retry1h: KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_1H,
+}
+
+/** A dead letter must never land on a topic the lanes consume, which would loop it back. */
+function blockedDeadLetterTopics(lane: ImageFetchLane): string[] {
+    return [lane.frontier, KAFKA_SESSION_REPLAY_IMAGE_SCRUB, lane.retry1m, lane.retry10m, lane.retry1h]
+}
 
 /** The addon holds a 15 MB native library and `index.ts` imports every server, so it loads on first use. */
 let anonymizer: typeof import('@posthog/replay-anonymizer') | undefined
@@ -94,15 +106,16 @@ function getAnonymizer(): typeof import('@posthog/replay-anonymizer') {
 
 export function buildFrontierPublisher(
     producer: KafkaProducer,
-    maxConcurrentImagePublishes: number
+    maxConcurrentImagePublishes: number,
+    lane: ImageFetchLane = V3_IMAGE_FETCH_LANE
 ): FrontierPublisher {
     return new FrontierPublisher(producer, {
-        frontierTopic: KAFKA_SESSION_REPLAY_IMAGE_FETCH,
+        frontierTopic: lane.frontier,
         scrubTopic: KAFKA_SESSION_REPLAY_IMAGE_SCRUB,
         delayTiers: [
-            { topic: KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_1M, delayMs: 60_000, metricTopic: 'retry_1m' },
-            { topic: KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_10M, delayMs: 600_000, metricTopic: 'retry_10m' },
-            { topic: KAFKA_SESSION_REPLAY_IMAGE_FETCH_RETRY_1H, delayMs: 3_600_000, metricTopic: 'retry_1h' },
+            { topic: lane.retry1m, delayMs: 60_000, metricTopic: 'retry_1m' },
+            { topic: lane.retry10m, delayMs: 600_000, metricTopic: 'retry_10m' },
+            { topic: lane.retry1h, delayMs: 3_600_000, metricTopic: 'retry_1h' },
         ],
         maxConcurrentImagePublishes,
         maxConcurrentRepublishes: maxConcurrentImagePublishes,
@@ -174,12 +187,13 @@ export function buildFetchRunner(
 }
 
 export function buildImageFetchConsumerConfigs(
-    config: IngestionSessionReplayMlMirrorServerConfig
+    config: IngestionSessionReplayMlMirrorServerConfig,
+    lane: ImageFetchLane = V3_IMAGE_FETCH_LANE
 ): KafkaConsumerV2Config[] {
     const targetBatchCount = config.SESSION_RECORDING_ML_IMAGE_FETCH_TARGET_PARTITIONS_PER_BATCH
     assertImageFetchBatchTarget(targetBatchCount)
     return Array.from({ length: targetBatchCount }, () => ({
-        topic: KAFKA_SESSION_REPLAY_IMAGE_FETCH,
+        topic: lane.frontier,
         groupId: config.SESSION_RECORDING_ML_IMAGE_FETCH_GROUP_ID,
         autoCommit: true,
         autoOffsetStore: true,
@@ -271,6 +285,8 @@ export async function shutdownImageFetchConsumers(
  * It scales separately because fetching waits on network IO while scrubbing needs CPU and ML models.
  */
 export class IngestionSessionReplayMlImageFetchServer extends MlMirrorConsumerServer {
+    /** The topics this lane reads and writes. The v4 lane overrides them. */
+    protected readonly lane: ImageFetchLane = V3_IMAGE_FETCH_LANE
     private keyManager?: MlKeyManager
     private crawlHistoryClient?: DynamoDBClient
     private producerRegistry?: KafkaProducerRegistry<SessionReplayProducerName>
@@ -342,14 +358,15 @@ export class IngestionSessionReplayMlImageFetchServer extends MlMirrorConsumerSe
         const producer = this.producerRegistry.getProducer(INGESTION_SESSIONREPLAY_ML_IMAGE_FETCH_PRODUCER)
         const publisher = buildFrontierPublisher(
             producer,
-            this.config.SESSION_RECORDING_ML_IMAGE_FETCH_MAX_PENDING_PUBLISHES
+            this.config.SESSION_RECORDING_ML_IMAGE_FETCH_MAX_PENDING_PUBLISHES,
+            this.lane
         )
         const deadLetterTopic = this.config.SESSION_RECORDING_ML_IMAGE_FETCH_DLQ_TOPIC
         const deadLetters = deadLetterTopic
-            ? new KafkaFrontierDeadLetterSink(producer, deadLetterTopic, BLOCKED_IMAGE_FETCH_DEAD_LETTER_TOPICS)
+            ? new KafkaFrontierDeadLetterSink(producer, deadLetterTopic, blockedDeadLetterTopics(this.lane))
             : null
 
-        const fetchRunner = buildFetchRunner(this.config, publisher, topHogMetrics)
+        const fetchRunner = buildFetchRunner(this.config, publisher, topHogMetrics, await this.imageSink(publisher))
         const fetchConsumer = new UrlFetchConsumer(
             crawlHistory,
             publisher,
@@ -367,7 +384,7 @@ export class IngestionSessionReplayMlImageFetchServer extends MlMirrorConsumerSe
             continuousPool: this.config.SESSION_RECORDING_ML_IMAGE_FETCH_CONTINUOUS_POOL,
         })
 
-        const consumerConfigs = buildImageFetchConsumerConfigs(this.config)
+        const consumerConfigs = buildImageFetchConsumerConfigs(this.config, this.lane)
         const batchJoiner = new ImageFetchBatchJoiner(
             imageFetchBatchesPerPass(this.config, consumerConfigs.length),
             (messages) => fetchConsumer.handleBatch(messages, Date.now())
@@ -412,6 +429,11 @@ export class IngestionSessionReplayMlImageFetchServer extends MlMirrorConsumerSe
                 )
             )
         )
+    }
+
+    /** Where fetched images go. The v3 lane sends them to the scrub topic through the publisher. */
+    protected imageSink(publisher: FrontierPublisher): Promise<FetchedImageSink> {
+        return Promise.resolve(publisher)
     }
 
     protected getCleanupResources(): CleanupResources {

@@ -12,6 +12,10 @@ export type MlMirrorConfig = {
     AI_RESEARCH_REPLAY_ROW_CACHE_MAX: number
     AI_RESEARCH_REPLAY_ROW_CACHE_LIFETIME_MS: number
     AI_RESEARCH_REPLAY_IMAGE_FETCH_V2_DYNAMODB_TABLE: string
+    /** The v4 image fetch lane: the team day key table, its KMS key, and the bucket fetched images go to. */
+    AI_RESEARCH_REPLAY_V4_KEY_TABLE: string
+    AI_RESEARCH_REPLAY_V4_KMS_KEY_ARN: string
+    AI_RESEARCH_REPLAY_V4_IMAGES_BUCKET: string
     AI_RESEARCH_REPLAY_S3_PREFIX: string
     /** Bucket of the v3 dataset, which holds only AISR03 frames. Empty until the cutover by session start timestamp selects it. */
     AI_RESEARCH_REPLAY_S3_BUCKET: string
@@ -245,6 +249,9 @@ export function getDefaultMlMirrorConfig(): MlMirrorConfig {
         AI_RESEARCH_REPLAY_ROW_CACHE_MAX: 100_000,
         AI_RESEARCH_REPLAY_ROW_CACHE_LIFETIME_MS: 300_000,
         AI_RESEARCH_REPLAY_IMAGE_FETCH_V2_DYNAMODB_TABLE: '',
+        AI_RESEARCH_REPLAY_V4_KEY_TABLE: '',
+        AI_RESEARCH_REPLAY_V4_KMS_KEY_ARN: '',
+        AI_RESEARCH_REPLAY_V4_IMAGES_BUCKET: '',
         AI_RESEARCH_REPLAY_S3_PREFIX: 'rrweb_2',
         AI_RESEARCH_REPLAY_S3_BUCKET: '',
         AI_RESEARCH_REPLAY_S3_V3_PREFIX: 'rrweb_3',

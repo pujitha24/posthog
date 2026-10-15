@@ -59,7 +59,7 @@ def excluded_flag_ids(candidates: list[FeatureFlag]) -> set[int]:
             "feature_flag_id", flat=True
         )
     )
-    excluded |= depended_on_flag_ids(project_ids)
+    excluded |= _depended_on_flag_ids(project_ids)
     # A trigger group counts here as much as the linked-flag column: both gate recording, so a
     # flag either one names must not be reported as a cleanup candidate.
     replay_gates = replay_gated_flags_for_projects(project_ids)
@@ -82,7 +82,7 @@ def excluded_flag_ids(candidates: list[FeatureFlag]) -> set[int]:
     return excluded
 
 
-def depended_on_flag_ids(project_ids: Collection[int]) -> set[int]:
+def _depended_on_flag_ids(project_ids: Collection[int]) -> set[int]:
     """Ids of flags that at least one non-deleted flag has a flag-type condition on.
 
     Matches local-evaluation payload semantics (all non-deleted flags, active or not):

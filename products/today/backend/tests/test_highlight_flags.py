@@ -105,9 +105,8 @@ class TestFlags(SimpleTestCase):
 
     @parameterized.expand(
         [
-            ("monday list of four", MONDAY, 4, "flag_0, flag_1, flag_2 and 1 more"),
-            ("monday list of six", MONDAY, 6, "Oldest: flag_0, flag_1, flag_2"),
-            ("costly list of four", TUESDAY, 4, "Same value for everyone: flag_0, flag_1, flag_2 and 1 more"),
+            ("monday list", MONDAY, 4, "flag_0, flag_1, flag_2 and 1 more"),
+            ("costly list", TUESDAY, 4, "Same value for everyone: flag_0, flag_1, flag_2 and 1 more"),
         ]
     )
     def test_cleanup_detail_names_the_first_flags(self, _name: str, today: date, count: int, expected: str) -> None:

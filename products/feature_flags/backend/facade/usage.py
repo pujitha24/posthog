@@ -1,10 +1,10 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime
 
 from posthog.hogql.constants import HogQLGlobalSettings
 from posthog.hogql.query import execute_hogql_query
 
+from posthog.dataclasses import frozen
 from posthog.models.team import Team
 from posthog.models.user import User
 
@@ -41,7 +41,7 @@ LIMIT {FLAG_CALL_LIMIT}
 """
 
 
-@dataclass(frozen=True)
+@frozen
 class CreatedFlag:
     id: int
     key: str
@@ -50,7 +50,7 @@ class CreatedFlag:
     remote_configuration: bool
 
 
-@dataclass(frozen=True)
+@frozen
 class FlagCalls:
     people_this_week: int
     people_last_week: int
@@ -60,7 +60,7 @@ class FlagCalls:
     value_this_week: str | None
 
 
-@dataclass(frozen=True)
+@frozen
 class FlagCallSummary:
     by_key: Mapping[str, FlagCalls]
     complete: bool
@@ -96,9 +96,10 @@ def summarize_flag_calls(team: Team, user: User) -> FlagCallSummary:
         user=user,
         settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
     )
+    columns = result.columns or []
     rows = result.results or []
     return FlagCallSummary(
-        by_key={row[0]: FlagCalls(*row[1:]) for row in rows if row[0]},
+        by_key={row[0]: FlagCalls(**dict(zip(columns[1:], row[1:]))) for row in rows if row[0]},
         complete=len(rows) < FLAG_CALL_LIMIT and all(row[0] for row in rows),
     )
 

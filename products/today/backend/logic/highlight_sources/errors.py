@@ -47,11 +47,29 @@ def _new_errors(context: Context) -> list[Candidate]:
     issues = list_new_unassigned_issue_activity(context.team, context.user, limit=NEW_ISSUE_CANDIDATES)
     if not issues:
         return []
-    exceptions = count_weekly_exceptions(context.team, context.user)
-    active_users = context.daily("weekly_active_users", lambda: count_weekly_active_users(context.team, context.user))
+    active_users = 0
+    if any(_is_client(issue) for issue in issues):
+        active_users = context.guard(
+            "errors_active_users",
+            lambda: context.daily("weekly_active_users", lambda: count_weekly_active_users(context.team, context.user)),
+            0,
+        )
+    exceptions = 0
+    if any(_is_server(issue) for issue in issues):
+        exceptions = context.guard(
+            "errors_weekly_exceptions", lambda: count_weekly_exceptions(context.team, context.user), 0
+        )
     relevant = uses_product(context, "Error tracking")
     candidates = [_new_error(context, issue, exceptions, active_users, relevant) for issue in issues]
     return [candidate for candidate in candidates if candidate is not None]
+
+
+def _is_client(issue: NewIssueActivity) -> bool:
+    return issue.client_share >= 0.8 and issue.users >= MIN_CLIENT_USERS
+
+
+def _is_server(issue: NewIssueActivity) -> bool:
+    return issue.client_share < 0.2
 
 
 def _new_error(
@@ -59,14 +77,14 @@ def _new_error(
 ) -> Candidate | None:
     name = short(_issue_name(issue.name, issue.description))
     started = f"Since {timezone.localtime(issue.first_seen, context.team.timezone_info).strftime('%b %-d')}"
-    if issue.client_share >= 0.8 and MIN_CLIENT_USERS <= issue.users <= active_users:
+    if _is_client(issue) and issue.users <= active_users:
         share = issue.users / active_users
         if share < MIN_CLIENT_SHARE:
             return None
         importance = min(1.0, 0.5 + share / 0.02)
         title = NEW_CLIENT_ERROR.format(issue=name, users=users(issue.users))
         detail = NEW_CLIENT_ERROR_DETAIL.format(started=started, share=f"{share * 100:.1f}%")
-    elif issue.client_share < 0.2 and exceptions:
+    elif _is_server(issue) and exceptions:
         share = issue.occurrences / exceptions
         if share < MIN_SERVER_SHARE:
             return None

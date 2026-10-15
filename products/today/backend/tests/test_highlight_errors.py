@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
 
@@ -52,20 +52,29 @@ class TestErrors(SimpleTestCase):
         quiet: list[ErrorTrackingIssueBasics] | Exception,
         *,
         relevant: bool = True,
+        active_users: int | Exception = CACHED_ACTIVE_USERS,
+        exceptions: int | Exception = WEEKLY_EXCEPTIONS,
     ) -> list[tuple[str, str, str | None]]:
         context = cast(
             Context,
             SimpleNamespace(
                 team=SimpleNamespace(id=1, timezone_info=ZoneInfo("UTC")),
                 user=SimpleNamespace(id=2),
-                daily=lambda _name, _compute: CACHED_ACTIVE_USERS,
+                daily=Mock(
+                    side_effect=active_users if isinstance(active_users, Exception) else None, return_value=active_users
+                ),
                 guard=guard,
             ),
         )
         registered = next(s for s in load_sources() if s.name == "errors")
         with (
             patch.object(errors, "list_new_unassigned_issue_activity", return_value=new),
-            patch.object(errors, "count_weekly_exceptions", return_value=WEEKLY_EXCEPTIONS),
+            patch.object(
+                errors,
+                "count_weekly_exceptions",
+                side_effect=exceptions if isinstance(exceptions, Exception) else None,
+                return_value=exceptions,
+            ),
             patch.object(
                 errors,
                 "list_quiet_issues_assigned_to",
@@ -165,6 +174,34 @@ class TestErrors(SimpleTestCase):
             [title for title, _, _ in found],
             [*[f"60 users saw the new error ‘{NAME}’"] * 5, f"1.0k users saw the new error ‘{NAME}’"],
         )
+
+    @parameterized.expand(
+        [
+            (
+                "active user total fails",
+                TimeoutError("active user query timed out"),
+                WEEKLY_EXCEPTIONS,
+                f"New server error ‘{NAME}’ is 5% of all errors",
+            ),
+            (
+                "exception total fails",
+                CACHED_ACTIVE_USERS,
+                TimeoutError("exception total query timed out"),
+                f"60 users saw the new error ‘{NAME}’",
+            ),
+        ]
+    )
+    def test_a_failed_total_hides_only_the_errors_that_need_it(
+        self, _name: str, active_users: int | Exception, exceptions: int | Exception, expected: str
+    ) -> None:
+        found = self._find(
+            [new_issue(1.0, 60, 90), new_issue(0.0, 3, 500)],
+            [],
+            active_users=active_users,
+            exceptions=exceptions,
+        )
+
+        self.assertEqual([title for title, _, _ in found], [expected])
 
     def test_new_errors_survive_when_the_quiet_issue_query_fails(self) -> None:
         found = self._find([new_issue(1.0, 60, 90)], TimeoutError("quiet issue query timed out"))

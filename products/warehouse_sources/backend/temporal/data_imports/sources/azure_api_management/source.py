@@ -1,5 +1,7 @@
 from typing import Optional, cast
 
+import structlog
+
 from products.warehouse_sources.backend.facade.codebase_detection import NOT_DETECTABLE
 from products.warehouse_sources.backend.facade.source_config import (
     DataWarehouseSourceCategory,
@@ -7,8 +9,10 @@ from products.warehouse_sources.backend.facade.source_config import (
     SourceConfig,
 )
 from products.warehouse_sources.backend.temporal.data_imports.sources.azure_log_analytics.azure_log_analytics import (
+    AzureLogAnalyticsClient,
     AzureLogAnalyticsResumeConfig,
     azure_log_analytics_source,
+    table_unreadable_reason,
     validate_credentials as validate_log_analytics_credentials,
 )
 from products.warehouse_sources.backend.temporal.data_imports.sources.azure_log_analytics.source import (
@@ -101,6 +105,22 @@ Register an app in Microsoft Entra ID, create a client secret for it, and give i
             names_set = set(names)
             schemas = [s for s in schemas if s.name in names_set]
         return schemas
+
+    def get_endpoint_permissions(
+        self,
+        config: AzureApiManagementSourceConfig,
+        team_id: int,
+        endpoints: list[str],
+        api_version: str | None = None,
+    ) -> dict[str, str | None]:
+        client = AzureLogAnalyticsClient(
+            config.tenant_id,
+            config.client_id,
+            config.client_secret,
+            config.workspace_id,
+            structlog.get_logger(__name__),
+        )
+        return {endpoint: table_unreadable_reason(client, endpoint) for endpoint in endpoints}
 
     def validate_credentials(
         self,

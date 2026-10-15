@@ -4,7 +4,6 @@ batch resolver walks when it sends."""
 from posthog.models.property import GroupTypeIndex
 from posthog.models.team.team import Team
 
-from products.cdp.backend.presentation.hog_functions import filter_cohort_ids
 from products.feature_flags.backend.person_sampling import bounded_memory_settings
 from products.feature_flags.backend.user_blast_radius import get_user_blast_radius
 from products.workflows.backend.facade.contracts import AudiencePage, AudienceSize, RealtimeAudienceCohort
@@ -23,6 +22,20 @@ from products.workflows.backend.services.batch_audience_cohorts import (
     realtime_cohort_status,
 )
 from products.workflows.backend.utils.batch_trigger_limit import get_hogflow_batch_trigger_limit
+
+
+def _top_level_cohort_ids(filters: dict) -> list[int | str]:
+    """Cohort ids of the audience's top-level conditions, the only ones the pickers can show and clear."""
+    properties = filters.get("properties")
+    if not isinstance(properties, list):
+        return []
+    return [
+        condition["value"]
+        for condition in properties
+        if isinstance(condition, dict)
+        and condition.get("type") == "cohort"
+        and isinstance(condition.get("value"), int | str)
+    ]
 
 
 def get_audience_size(
@@ -61,7 +74,7 @@ def get_audience_size(
         blast_radius = get_person_audience_count_v2(team, filters)
 
     mixed_realtime_cohort = (
-        find_realtime_behavioral_cohort(team.project_id, [*filter_cohort_ids(filters)])
+        find_realtime_behavioral_cohort(team.project_id, _top_level_cohort_ids(filters))
         if group_type_index is None
         else None
     )

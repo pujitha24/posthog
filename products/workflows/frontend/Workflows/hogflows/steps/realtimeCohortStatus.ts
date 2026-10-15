@@ -2,11 +2,16 @@ import { AnyPropertyFilter, PropertyFilterType } from '~/types'
 
 import { RealtimeCohortStatusApi } from 'products/workflows/frontend/generated/api.schemas'
 
-/** The audience reduced to its realtime cohort, which has to be the only condition. */
-export function keepOnlyRealtimeCohort(properties: AnyPropertyFilter[], cohortId: number): AnyPropertyFilter[] {
-    return properties
-        .filter((property) => property.type === PropertyFilterType.Cohort && Number(property.value) === cohortId)
-        .slice(0, 1)
+/**
+ * The audience reduced to its realtime cohort, which has to be the only condition. Null when the cohort is
+ * not one of the audience's top-level conditions, for example when a preview response is stale or the
+ * cohort sits in a nested group, so a caller never empties the audience to everyone.
+ */
+export function keepOnlyRealtimeCohort(properties: AnyPropertyFilter[], cohortId: number): AnyPropertyFilter[] | null {
+    const cohort = properties.find(
+        (property) => property.type === PropertyFilterType.Cohort && Number(property.value) === cohortId
+    )
+    return cohort && properties.length > 1 ? [cohort] : null
 }
 
 /** Whether the audience's realtime cohort is still calculating, so a send waits for it. */

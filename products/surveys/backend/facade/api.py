@@ -12,14 +12,14 @@ from products.surveys.backend.desktop_feedback import (
     submit_desktop_feedback,
 )
 from products.surveys.backend.models import Survey
-from products.surveys.backend.responses.fetch_rows import SUBMISSION_GROUPING_KEY
+from products.surveys.backend.responses.fetch_rows import RESPONSE_EVENT_FILTER, SUBMISSION_GROUPING_KEY
 
 WEEKLY_RESPONSES = f"""
 SELECT properties.$survey_id AS survey_id,
        uniqIf({SUBMISSION_GROUPING_KEY}, timestamp >= now() - INTERVAL 7 DAY) AS this_week,
        uniqIf({SUBMISSION_GROUPING_KEY}, timestamp < now() - INTERVAL 7 DAY) AS last_week
 FROM events
-WHERE timestamp >= now() - INTERVAL 14 DAY AND event = 'survey sent' AND properties.$survey_id IN {{survey_ids}}
+WHERE timestamp >= now() - INTERVAL 14 DAY AND {RESPONSE_EVENT_FILTER} AND properties.$survey_id IN {{survey_ids}}
 GROUP BY survey_id
 """
 
@@ -37,6 +37,7 @@ def list_running_survey_responses(team: Team, user: User, *, limit: int) -> list
         Survey.objects.filter(
             team_id=team.id, created_by_id=user.id, start_date__isnull=False, end_date__isnull=True, archived=False
         )
+        .exclude(product_tour__isnull=False)
         .order_by("-created_at")
         .values_list("id", "name")[:limit]
     )

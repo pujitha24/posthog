@@ -446,6 +446,7 @@ export class ToolExecutor {
             }
 
             const responseAnalyticsProperties = toolResultAnalyticsProperties(response)
+            const spanOutput = response
             response = await offloadToolResult(response, state)
 
             toolCallsTotal.inc({ tool: tool.name, status: 'success' })
@@ -482,7 +483,7 @@ export class ToolExecutor {
                 durationMs: duration,
                 isError: false,
                 input: validation.data,
-                output: response,
+                output: spanOutput,
             })
 
             return response

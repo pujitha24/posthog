@@ -5,7 +5,6 @@ from zoneinfo import ZoneInfo
 
 from unittest.mock import patch
 
-from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from parameterized import parameterized
@@ -46,9 +45,6 @@ SAME = calls(people=50, calls_this_week=200_000, values=1)
 
 
 class TestFlags(SimpleTestCase):
-    def setUp(self) -> None:
-        cache.clear()
-
     def _find(
         self, today: date, created_flags: list[CreatedFlag], by_key: dict[str, FlagCalls], *, complete: bool = True
     ) -> list[tuple[str, str, str | None]]:
@@ -58,7 +54,7 @@ class TestFlags(SimpleTestCase):
                 team=SimpleNamespace(id=1, timezone_info=ZoneInfo("UTC")),
                 user=SimpleNamespace(id=2),
                 today=today,
-                restrictions="none",
+                daily=lambda _name, compute: compute(),
             ),
         )
         registered = next(s for s in load_sources() if s.name == "flags")

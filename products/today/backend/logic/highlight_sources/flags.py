@@ -1,13 +1,11 @@
 import re
 
-from django.core.cache import cache
 from django.utils import timezone
 
 from products.feature_flags.backend.facade.usage import (
     FLAG_CALL_DAYS,
     CreatedFlag,
     FlagCalls,
-    FlagCallSummary,
     list_flags_created_by,
     summarize_flag_calls,
 )
@@ -33,7 +31,6 @@ RISKY_FLAGS = re.compile(r"(?i)(kill|override|switch|disable|maintenance|remote-
 MIN_REACH = 20
 SAME_VALUE_MIN_AGE_DAYS = 30
 CLEANUP_COST_MIN = 100_000
-DAY_SECONDS = 24 * 60 * 60
 NO_CALLS = FlagCalls(
     people_this_week=0, people_last_week=0, calls_this_week=0, calls=0, values_this_week=0, value_this_week=None
 )
@@ -47,7 +44,7 @@ def find(context: Context) -> Found:
     ]
     if not flags:
         return Found()
-    summary = _daily_summary(context)
+    summary = context.daily("flag_calls", lambda: summarize_flag_calls(context.team, context.user))
     reach_drops: list[Candidate] = []
     unused: list[tuple[CreatedFlag, int]] = []
     same: list[tuple[CreatedFlag, int, FlagCalls]] = []
@@ -64,16 +61,6 @@ def find(context: Context) -> Found:
             unused.append((flag, age))
     cleanup = _cleanup(context, unused, same)
     return Found(items=(*reach_drops, *([cleanup] if cleanup else [])))
-
-
-def _daily_summary(context: Context) -> FlagCallSummary:
-    key = f"today_highlights:flag_calls:v1:{context.team.id}:{context.restrictions}:{context.today.isoformat()}"
-    cached = cache.get(key)
-    if isinstance(cached, FlagCallSummary):
-        return cached
-    summary = summarize_flag_calls(context.team, context.user)
-    cache.set(key, summary, DAY_SECONDS)
-    return summary
 
 
 def _reach_drop(flag: CreatedFlag, calls: FlagCalls) -> Candidate:

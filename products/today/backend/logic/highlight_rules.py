@@ -1,0 +1,24 @@
+import re
+
+
+def human(value: float) -> str:
+    size = abs(value)
+    if size >= 999_500:
+        return f"{value / 1_000_000:.1f}M"
+    if size >= 9_950:
+        return f"{value / 1000:.0f}k"
+    if size >= 999.5:
+        return f"{value / 1000:.1f}k"
+    return f"{value:.0f}" if size >= 10 or float(value).is_integer() else f"{value:.1f}"
+
+
+def users(count: float) -> str:
+    return "1 user" if count == 1 else f"{human(count)} users"
+
+
+def short(text: str, limit: int = 60) -> str:
+    text = re.sub(r"\s+", " ", str(text or "")).replace('"', "").strip()
+    text = re.sub(r"'([^']*)'", "‘\\1’", text).replace("'", "’")
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:(-– ")

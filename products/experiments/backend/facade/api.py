@@ -5,6 +5,7 @@ This module provides the public interface for creating and managing experiments
 using framework-free DTOs, wrapping the existing ExperimentService.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from rest_framework.exceptions import ValidationError
@@ -13,6 +14,7 @@ from posthog.models.team import Team
 from posthog.models.user import User
 
 from products.experiments.backend.experiment_service import ExperimentService
+from products.experiments.backend.flag_enrollment import enrolled_people_by_flag
 from products.experiments.backend.health.context import load_health_context
 from products.experiments.backend.health.exposure_gate import load_split_history
 from products.experiments.backend.health.registry import (
@@ -26,7 +28,7 @@ from products.experiments.backend.hogql_queries.exposure_query_logic import (
 )
 from products.experiments.backend.models.experiment import Experiment as ExperimentModel
 
-from .contracts import CreateExperimentInput, Experiment, ExperimentHealthFinding, ExperimentHealthReaderAccess
+from .contracts import CreateExperimentInput, EndedExperiment, Experiment, ExperimentHealthFinding, ExperimentHealthReaderAccess, RunningExperiment
 
 
 def create_experiment(*, team: Team, user: User, input_dto: CreateExperimentInput) -> Experiment:
@@ -140,6 +142,49 @@ def get_experiment_health_findings(
     split_history = load_split_history(experiment, reader_access=reader_access)
     context = load_health_context(experiment, split_history=split_history)
     return evaluate_health(context, EXPERIMENT_HEALTH_CHECKS)
+
+
+def list_ended_experiments_without_conclusion(
+    team_id: int, user_id: int, *, since: datetime, limit: int
+) -> list[EndedExperiment]:
+    rows = (
+        ExperimentModel.objects.filter(
+            team_id=team_id,
+            created_by_id=user_id,
+            end_date__gte=since,
+            conclusion__isnull=True,
+            archived=False,
+        )
+        .exclude(deleted=True)
+        .order_by("-end_date")
+        .values_list("id", "name", "end_date")[:limit]
+    )
+    return [EndedExperiment(id=id, name=name, ended_at=ended_at) for id, name, ended_at in rows]
+
+
+def list_running_experiments(
+    team_id: int, user_id: int, *, started_before: datetime, limit: int
+) -> list[RunningExperiment]:
+    rows = (
+        ExperimentModel.objects.filter(
+            team_id=team_id,
+            created_by_id=user_id,
+            start_date__lte=started_before,
+            end_date__isnull=True,
+            archived=False,
+        )
+        .exclude(deleted=True)
+        .order_by("start_date")
+        .values_list("id", "name", "start_date", "feature_flag__key")[:limit]
+    )
+    return [
+        RunningExperiment(id=id, name=name, started_at=started_at, flag_key=flag_key)
+        for id, name, started_at, flag_key in rows
+    ]
+
+
+def count_enrolled_people(team: Team, user: User, flag_keys: list[str]) -> dict[str, int]:
+    return enrolled_people_by_flag(team, user, flag_keys)
 
 
 def _experiment_model_to_dto(experiment: ExperimentModel) -> Experiment:

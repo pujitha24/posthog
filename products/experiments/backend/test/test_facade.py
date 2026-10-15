@@ -1,19 +1,27 @@
 """Tests for experiments facade layer."""
 
-from datetime import UTC, datetime
+import json
+import uuid
+from datetime import UTC, datetime, timedelta
 
 import time_machine
-from posthog.test.base import APIBaseTest, BaseTest
+from posthog.test.base import APIBaseTest, BaseTest, ClickhouseTestMixin, _create_event, flush_persons_and_events
+
+from django.utils import timezone
 
 from parameterized import parameterized
 
+from posthog.clickhouse.client import sync_execute
 from posthog.models.organization import Organization
 from posthog.models.team import Team
+from posthog.test.persons import create_person
 
-from products.experiments.backend.facade import count_running_experiments_on_feature_flag_called, create_experiment
-from products.experiments.backend.facade.contracts import CreateExperimentInput
+from products.experiments.backend.facade import api, count_running_experiments_on_feature_flag_called, create_experiment
+from products.experiments.backend.facade.contracts import CreateExperimentInput, EndedExperiment, RunningExperiment
 from products.experiments.backend.models.experiment import Experiment
+from products.feature_flags.backend.facade.enums import FlagEvaluationsMode
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
+from products.feature_flags.backend.models.organization_feature_flags_config import OrganizationFeatureFlagsConfig
 
 PAGEVIEW_EXPOSURE = {
     "exposure_config": {"kind": "ExperimentEventExposureConfig", "event": "$pageview", "properties": []}
@@ -191,3 +199,98 @@ class TestCountRunningExperimentsOnFeatureFlagCalled(BaseTest):
         )
 
         assert count_running_experiments_on_feature_flag_called(self.organization.id) == expected
+
+
+class TestHighlightFacts(BaseTest):
+    def _experiment(self, name: str, **fields: object) -> Experiment:
+        flag = FeatureFlag.objects.create(team=self.team, key=f"flag-{uuid.uuid4().hex[:8]}", created_by=self.user)
+        return Experiment.objects.create(
+            **{"team": self.team, "name": name, "feature_flag": flag, "created_by": self.user, **fields}
+        )
+
+    def test_lists_ended_experiments_without_a_conclusion(self) -> None:
+        now = timezone.now()
+        started = now - timedelta(days=30)
+        ended_at = now - timedelta(days=1)
+        listed = self._experiment("Pricing page layout", start_date=started, end_date=ended_at)
+        self._experiment("Concluded", start_date=started, end_date=now - timedelta(days=1), conclusion="won")
+        self._experiment("Ended long ago", start_date=started, end_date=now - timedelta(days=10))
+        self._experiment("Archived", start_date=started, end_date=now - timedelta(days=1), archived=True)
+        self._experiment("Deleted", start_date=started, end_date=now - timedelta(days=1), deleted=True)
+        self._experiment("Still running", start_date=started)
+        self._experiment(
+            "Not yours",
+            start_date=started,
+            end_date=now - timedelta(days=1),
+            created_by=self._create_user("other@example.com"),
+        )
+
+        assert api.list_ended_experiments_without_conclusion(
+            self.team.pk, self.user.pk, since=now - timedelta(days=7), limit=20
+        ) == [EndedExperiment(id=listed.id, name="Pricing page layout", ended_at=ended_at)]
+
+    def test_lists_running_experiments_started_before_the_cutoff(self) -> None:
+        now = timezone.now()
+        started_at = now - timedelta(days=80)
+        listed = self._experiment("Onboarding tips", start_date=started_at)
+        self._experiment("Started recently", start_date=now - timedelta(days=10))
+        self._experiment("Draft")
+        self._experiment("Ended", start_date=now - timedelta(days=80), end_date=now - timedelta(days=1))
+
+        assert api.list_running_experiments(
+            self.team.pk, self.user.pk, started_before=now - timedelta(days=60), limit=20
+        ) == [
+            RunningExperiment(
+                id=listed.id, name="Onboarding tips", started_at=started_at, flag_key=listed.feature_flag.key
+            )
+        ]
+
+
+class TestCountEnrolledPeople(ClickhouseTestMixin, BaseTest):
+    @parameterized.expand(
+        [("events", FlagEvaluationsMode.EVENTS), ("flag_evaluations", FlagEvaluationsMode.FLAG_EVALUATIONS_ONLY)]
+    )
+    def test_counts_people_who_got_a_variant_in_the_last_14_days(self, _name: str, mode: FlagEvaluationsMode) -> None:
+        OrganizationFeatureFlagsConfig.objects.update_or_create(
+            organization=self.organization, defaults={"flag_evaluations_mode": mode}
+        )
+        calls = [
+            ("checkout", "test", 2),
+            ("checkout", "control", 3),
+            ("checkout", "false", 2),
+            ("checkout", "test", 20),
+            ("other", "test", 2),
+        ]
+        for flag_key, response, days_ago in calls:
+            distinct_id = str(uuid.uuid4())
+            create_person(team=self.team, distinct_ids=[distinct_id])
+            called_at = timezone.now() - timedelta(days=days_ago)
+            properties = {"$feature_flag": flag_key, "$feature_flag_response": response}
+            if mode == FlagEvaluationsMode.EVENTS:
+                _create_event(
+                    team=self.team,
+                    event="$feature_flag_called",
+                    distinct_id=distinct_id,
+                    properties=properties,
+                    timestamp=called_at,
+                )
+            else:
+                sync_execute(
+                    "INSERT INTO writable_flag_evaluations"
+                    " (uuid, event, properties, timestamp, team_id, distinct_id, created_at, person_id) VALUES",
+                    [
+                        (
+                            str(uuid.uuid4()),
+                            "$feature_flag_called",
+                            json.dumps(properties),
+                            called_at,
+                            self.team.pk,
+                            distinct_id,
+                            called_at,
+                            str(uuid.uuid4()),
+                        )
+                    ],
+                )
+        flush_persons_and_events()
+
+        assert api.count_enrolled_people(self.team, self.user, ["checkout"]) == {"checkout": 2}

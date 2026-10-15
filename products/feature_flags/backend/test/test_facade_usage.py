@@ -20,6 +20,7 @@ from products.feature_flags.backend.facade.enums import FlagEvaluationsMode
 from products.feature_flags.backend.facade.usage import FlagCalls, list_flags_created_by, summarize_flag_calls
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
 from products.feature_flags.backend.models.organization_feature_flags_config import OrganizationFeatureFlagsConfig
+from products.feature_flags.backend.models.scheduled_change import ScheduledChange
 
 
 class TestListFlagsCreatedBy(BaseTest):
@@ -30,6 +31,27 @@ class TestListFlagsCreatedBy(BaseTest):
         remote = FeatureFlag.objects.create(
             team=self.team, key="app-settings", created_by=self.user, is_remote_configuration=True
         )
+        now = timezone.now()
+        schedules = {
+            "pending-change": {"scheduled_at": now + timedelta(days=1)},
+            "recurring-change": {"scheduled_at": now - timedelta(days=1), "executed_at": now, "is_recurring": True},
+            "done-change": {"scheduled_at": now - timedelta(days=2), "executed_at": now - timedelta(days=1)},
+            "ended-recurring-change": {
+                "scheduled_at": now - timedelta(days=9),
+                "executed_at": now - timedelta(days=8),
+                "is_recurring": True,
+                "end_date": now - timedelta(days=1),
+            },
+        }
+        scheduled = {}
+        for key, fields in schedules.items():
+            scheduled[key] = FeatureFlag.objects.create(team=self.team, key=key, created_by=self.user)
+            ScheduledChange.objects.create(
+                team=self.team,
+                record_id=str(scheduled[key].id),
+                model_name=ScheduledChange.AllowedModels.FEATURE_FLAG,
+                **fields,
+            )
         FeatureFlag.objects.create(team=self.team, key="deleted", created_by=self.user, deleted=True)
         FeatureFlag.objects.create(team=self.team, key="archived", created_by=self.user, archived=True, active=False)
         FeatureFlag.objects.create(team=self.team, key="theirs", created_by=self._create_user("other@example.com"))
@@ -41,7 +63,15 @@ class TestListFlagsCreatedBy(BaseTest):
 
         self.assertEqual(
             [(f.id, f.removal_blocked, f.remote_configuration) for f in flags],
-            [(mine.id, False, False), (in_experiment.id, True, False), (remote.id, False, True)],
+            [
+                (mine.id, False, False),
+                (in_experiment.id, True, False),
+                (remote.id, False, True),
+                (scheduled["pending-change"].id, True, False),
+                (scheduled["recurring-change"].id, True, False),
+                (scheduled["done-change"].id, False, False),
+                (scheduled["ended-recurring-change"].id, False, False),
+            ],
         )
 
 

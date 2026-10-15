@@ -1,6 +1,9 @@
 from collections.abc import Mapping
 from datetime import datetime
 
+from django.db.models import Q
+from django.utils import timezone
+
 from posthog.hogql.constants import HogQLGlobalSettings
 from posthog.hogql.query import execute_hogql_query
 
@@ -12,6 +15,7 @@ from products.feature_flags.backend.cleanup_blockers import excluded_flag_ids
 from products.feature_flags.backend.facade.enums import FlagEvaluationsMode
 from products.feature_flags.backend.facade.flags import get_flag_evaluations_read_mode
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
+from products.feature_flags.backend.models.scheduled_change import ScheduledChange
 
 FLAG_CALL_DAYS = 14
 FLAG_CALL_LIMIT = 10000
@@ -75,7 +79,7 @@ def list_flags_created_by(team_id: int, user_id: int, *, limit: int) -> list[Cre
     )
     if not flags:
         return []
-    blocked = excluded_flag_ids(flags)
+    blocked = excluded_flag_ids(flags) | _scheduled_flag_ids(team_id, flags)
     return [
         CreatedFlag(
             id=flag.id,
@@ -114,3 +118,18 @@ __all__ = [
     "list_flags_created_by",
     "summarize_flag_calls",
 ]
+
+
+def _scheduled_flag_ids(team_id: int, flags: list[FeatureFlag]) -> set[int]:
+    recurring = Q(is_recurring=True) & (Q(end_date__isnull=True) | Q(end_date__gt=timezone.now()))
+    active = Q(executed_at__isnull=True) | recurring
+    return {
+        int(record_id)
+        for record_id in ScheduledChange.objects.filter(
+            team_id=team_id,
+            model_name=ScheduledChange.AllowedModels.FEATURE_FLAG,
+            record_id__in=[str(flag.id) for flag in flags],
+        )
+        .filter(active)
+        .values_list("record_id", flat=True)
+    }

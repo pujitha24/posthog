@@ -201,6 +201,7 @@ class TestCountRunningExperimentsOnFeatureFlagCalled(BaseTest):
         assert count_running_experiments_on_feature_flag_called(self.organization.id) == expected
 
 
+@time_machine.travel("2026-10-14T12:00:00Z", tick=False)
 class TestHighlightFacts(BaseTest):
     def _experiment(self, name: str, **fields: object) -> Experiment:
         flag = FeatureFlag.objects.create(team=self.team, key=f"flag-{uuid.uuid4().hex[:8]}", created_by=self.user)
@@ -247,6 +248,9 @@ class TestHighlightFacts(BaseTest):
 
 
 class TestCountEnrolledPeople(ClickhouseTestMixin, BaseTest):
+    def _ago(self, days: int) -> datetime:
+        return timezone.now() - timedelta(days=days)
+
     @parameterized.expand(
         [("events", FlagEvaluationsMode.EVENTS), ("flag_evaluations", FlagEvaluationsMode.FLAG_EVALUATIONS_ONLY)]
     )
@@ -264,7 +268,7 @@ class TestCountEnrolledPeople(ClickhouseTestMixin, BaseTest):
         for flag_key, response, days_ago in calls:
             distinct_id = str(uuid.uuid4())
             create_person(team=self.team, distinct_ids=[distinct_id])
-            called_at = timezone.now() - timedelta(days=days_ago)
+            called_at = self._ago(days_ago)
             properties = {"$feature_flag": flag_key, "$feature_flag_response": response}
             if mode == FlagEvaluationsMode.EVENTS:
                 _create_event(

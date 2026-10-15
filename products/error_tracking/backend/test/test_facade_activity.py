@@ -60,7 +60,7 @@ class TestIssueActivity(ClickhouseTestMixin, APIBaseTest):
         older = ErrorTrackingIssueFingerprintV2.objects.create(team=self.team, issue=merged, fingerprint=str(uuid4()))
         ErrorTrackingIssueFingerprintV2.objects.filter(id=older.id).update(first_seen=self._ago(30))
         self._exception(new, "user-1", 1)
-        self._exception(new, "user-1", 2)
+        self._exception(new, "user-1", 2, lib="posthog-kmp")
         self._exception(new, "user-2", 2, lib="posthog-python")
         for issue in (assigned, resolved, old, merged):
             self._exception(issue, "user-1", 1)

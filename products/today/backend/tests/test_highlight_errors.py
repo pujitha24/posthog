@@ -11,18 +11,15 @@ from django.test import SimpleTestCase
 
 from parameterized import parameterized
 
-from products.error_tracking.backend.facade.contracts import (
-    ErrorTrackingIssueBasics,
-    NewIssueActivity,
-    WeeklyExceptionTotals,
-)
+from products.error_tracking.backend.facade.contracts import ErrorTrackingIssueBasics, NewIssueActivity
 from products.today.backend.logic.highlight_registry import load_sources
 from products.today.backend.logic.highlight_sources import errors
 from products.today.backend.logic.highlight_types import Context
 
 NAME = "TypeError: Cannot read properties of undefined"
 ISSUE_ID = uuid.UUID("01890000-0000-7000-8000-000000000001")
-TOTALS = WeeklyExceptionTotals(occurrences=10_000, active_users=20_000)
+WEEKLY_EXCEPTIONS = 10_000
+CACHED_ACTIVE_USERS = 20_000
 
 
 def new_issue(client_share: float, users: int, occurrences: int) -> NewIssueActivity:
@@ -61,14 +58,14 @@ class TestErrors(SimpleTestCase):
             SimpleNamespace(
                 team=SimpleNamespace(id=1, timezone_info=ZoneInfo("UTC")),
                 user=SimpleNamespace(id=2),
-                daily=lambda _name, compute: compute(),
+                daily=lambda _name, _compute: CACHED_ACTIVE_USERS,
                 guard=guard,
             ),
         )
         registered = next(s for s in load_sources() if s.name == "errors")
         with (
             patch.object(errors, "list_new_unassigned_issue_activity", return_value=new),
-            patch.object(errors, "get_weekly_exception_totals", return_value=TOTALS),
+            patch.object(errors, "count_weekly_exceptions", return_value=WEEKLY_EXCEPTIONS),
             patch.object(
                 errors,
                 "list_quiet_issues_assigned_to",
@@ -147,7 +144,8 @@ class TestErrors(SimpleTestCase):
                 (
                     "3 of your issues had no events in the last 14 days",
                     "‘ChunkLoadError’ and 2 more",
-                    "/error_tracking",
+                    "/error_tracking?assignee=%7B%22id%22%3A+2%2C+%22type%22%3A+%22user%22%7D&status=active"
+                    "&dateRange=%7B%22date_from%22%3A+%22all%22%7D",
                 ),
             ),
         ]
@@ -157,12 +155,16 @@ class TestErrors(SimpleTestCase):
     ) -> None:
         self.assertEqual(self._find([], [basics(name) for name in names]), [expected])
 
-    def test_a_qualifying_error_behind_weak_ones_still_shows(self) -> None:
-        weak = [new_issue(0.5, 60, 900) for _ in range(5)]
+    def test_a_strong_error_behind_weaker_ones_still_shows(self) -> None:
+        ineligible = [new_issue(0.5, 60, 900) for _ in range(5)]
+        weaker = [new_issue(1.0, 60, 90) for _ in range(5)]
 
-        found = self._find([*weak, new_issue(1.0, 60, 90)], [])
+        found = self._find([*ineligible, *weaker, new_issue(1.0, 1_000, 2_000)], [])
 
-        self.assertEqual([title for title, _, _ in found], [f"60 users saw the new error ‘{NAME}’"])
+        self.assertEqual(
+            [title for title, _, _ in found],
+            [*[f"60 users saw the new error ‘{NAME}’"] * 5, f"1.0k users saw the new error ‘{NAME}’"],
+        )
 
     def test_new_errors_survive_when_the_quiet_issue_query_fails(self) -> None:
         found = self._find([new_issue(1.0, 60, 90)], TimeoutError("quiet issue query timed out"))

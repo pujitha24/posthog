@@ -316,12 +316,6 @@ class NewIssueActivity:
 
 
 @dataclass(frozen=True)
-class WeeklyExceptionTotals:
-    occurrences: int
-    active_users: int
-
-
-@dataclass(frozen=True)
 class ErrorTrackingRecommendation:
     id: UUID
     type: str

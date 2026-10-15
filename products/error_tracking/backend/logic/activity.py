@@ -10,11 +10,7 @@ from posthog.hogql.query import execute_hogql_query
 
 from posthog.models import Team, User
 
-from products.error_tracking.backend.facade.contracts import (
-    ErrorTrackingIssueBasics,
-    NewIssueActivity,
-    WeeklyExceptionTotals,
-)
+from products.error_tracking.backend.facade.contracts import ErrorTrackingIssueBasics, NewIssueActivity
 from products.error_tracking.backend.models import ErrorTrackingIssue
 
 QUERY_TIMEOUT_SECONDS = 10
@@ -27,6 +23,7 @@ CLIENT_LIBRARIES = (
     "posthog-android",
     "posthog-react-native",
     "posthog-flutter",
+    "posthog-kmp",
 )
 NEW_ISSUE_ACTIVITY = """
 SELECT issue_id, uniq(person_id) AS users, count() AS occurrences,
@@ -38,10 +35,15 @@ HAVING min(issue_first_seen) >= now() - INTERVAL {days} DAY
 ORDER BY occurrences DESC
 LIMIT {limit}
 """
-WEEKLY_TOTALS = """
-SELECT countIf(event = '$exception') AS occurrences, uniqIf(person_id, event IN ('$pageview', '$screen')) AS active_users
+WEEKLY_EXCEPTIONS = """
+SELECT count()
 FROM events
-WHERE timestamp >= now() - INTERVAL 7 DAY AND event IN ('$pageview', '$screen', '$exception')
+WHERE event = '$exception' AND timestamp >= now() - INTERVAL {days} DAY
+"""
+WEEKLY_ACTIVE_USERS = """
+SELECT uniq(person_id)
+FROM events
+WHERE event IN ('$pageview', '$screen') AND timestamp >= now() - INTERVAL {days} DAY
 """
 ISSUES_WITH_EVENTS = """
 SELECT DISTINCT toString(issue_id)
@@ -107,9 +109,16 @@ def new_unassigned_issue_activity(team: Team, user: User, *, limit: int) -> list
     return found
 
 
-def weekly_totals(team: Team, user: User) -> WeeklyExceptionTotals:
-    occurrences, active_users = _rows(WEEKLY_TOTALS, team, user, "error_tracking_weekly_totals", {})[0]
-    return WeeklyExceptionTotals(occurrences=occurrences, active_users=active_users)
+def _count(query: str, team: Team, user: User, name: str) -> int:
+    return _rows(query, team, user, name, {"days": ast.Constant(value=NEW_ISSUE_DAYS)})[0][0]
+
+
+def weekly_exception_count(team: Team, user: User) -> int:
+    return _count(WEEKLY_EXCEPTIONS, team, user, "error_tracking_weekly_exceptions")
+
+
+def weekly_active_users(team: Team, user: User) -> int:
+    return _count(WEEKLY_ACTIVE_USERS, team, user, "error_tracking_weekly_active_users")
 
 
 def quiet_issues_assigned_to(team: Team, user: User, *, quiet_days: int, limit: int) -> list[ErrorTrackingIssueBasics]:

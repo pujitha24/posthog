@@ -198,8 +198,12 @@ def list_new_unassigned_issue_activity(team: Team, user: User, *, limit: int) ->
     return activity.new_unassigned_issue_activity(team, user, limit=limit)
 
 
-def get_weekly_exception_totals(team: Team, user: User) -> contracts.WeeklyExceptionTotals:
-    return activity.weekly_totals(team, user)
+def count_weekly_exceptions(team: Team, user: User) -> int:
+    return activity.weekly_exception_count(team, user)
+
+
+def count_weekly_active_users(team: Team, user: User) -> int:
+    return activity.weekly_active_users(team, user)
 
 
 def list_quiet_issues_assigned_to(

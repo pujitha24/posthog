@@ -1,11 +1,15 @@
+import json
+from urllib.parse import urlencode
+
 from django.utils import timezone
 
 from products.error_tracking.backend.facade.api import (
-    get_weekly_exception_totals,
+    count_weekly_active_users,
+    count_weekly_exceptions,
     list_new_unassigned_issue_activity,
     list_quiet_issues_assigned_to,
 )
-from products.error_tracking.backend.facade.contracts import NewIssueActivity, WeeklyExceptionTotals
+from products.error_tracking.backend.facade.contracts import NewIssueActivity
 
 from ...facade.enums import HighlightLabel
 from ..highlight_rules import human, short, users, uses_product
@@ -21,7 +25,6 @@ ASSIGNED_QUIET_MANY = "{n} of your issues had no events in the last 14 days"
 AND_MORE = "‘{issue}’ and {n} more"
 
 NEW_ISSUE_CANDIDATES = 50
-NEW_ISSUES = 5
 QUIET_DAYS = 14
 QUIET_ISSUES = 500
 MIN_CLIENT_USERS = 50
@@ -44,26 +47,27 @@ def _new_errors(context: Context) -> list[Candidate]:
     issues = list_new_unassigned_issue_activity(context.team, context.user, limit=NEW_ISSUE_CANDIDATES)
     if not issues:
         return []
-    totals = context.daily("exception_totals", lambda: get_weekly_exception_totals(context.team, context.user))
+    exceptions = count_weekly_exceptions(context.team, context.user)
+    active_users = context.daily("weekly_active_users", lambda: count_weekly_active_users(context.team, context.user))
     relevant = uses_product(context, "Error tracking")
-    candidates = [_new_error(context, issue, totals, relevant) for issue in issues]
-    return [candidate for candidate in candidates if candidate is not None][:NEW_ISSUES]
+    candidates = [_new_error(context, issue, exceptions, active_users, relevant) for issue in issues]
+    return [candidate for candidate in candidates if candidate is not None]
 
 
 def _new_error(
-    context: Context, issue: NewIssueActivity, totals: WeeklyExceptionTotals, relevant: bool
+    context: Context, issue: NewIssueActivity, exceptions: int, active_users: int, relevant: bool
 ) -> Candidate | None:
     name = short(_issue_name(issue.name, issue.description))
     started = f"Since {timezone.localtime(issue.first_seen, context.team.timezone_info).strftime('%b %-d')}"
-    if issue.client_share >= 0.8 and MIN_CLIENT_USERS <= issue.users <= totals.active_users:
-        share = issue.users / totals.active_users
+    if issue.client_share >= 0.8 and MIN_CLIENT_USERS <= issue.users <= active_users:
+        share = issue.users / active_users
         if share < MIN_CLIENT_SHARE:
             return None
         importance = min(1.0, 0.5 + share / 0.02)
         title = NEW_CLIENT_ERROR.format(issue=name, users=users(issue.users))
         detail = NEW_CLIENT_ERROR_DETAIL.format(started=started, share=f"{share * 100:.1f}%")
-    elif issue.client_share < 0.2 and totals.occurrences:
-        share = issue.occurrences / totals.occurrences
+    elif issue.client_share < 0.2 and exceptions:
+        share = issue.occurrences / exceptions
         if share < MIN_SERVER_SHARE:
             return None
         importance = min(1.0, 0.4 + share / 0.1)
@@ -86,6 +90,15 @@ def _new_error(
     )
 
 
+def _assigned_issues_url(context: Context) -> str:
+    query = {
+        "assignee": json.dumps({"id": context.user.id, "type": "user"}),
+        "status": "active",
+        "dateRange": json.dumps({"date_from": "all"}),
+    }
+    return f"/error_tracking?{urlencode(query)}"
+
+
 def _quiet_assigned(context: Context) -> list[Candidate]:
     issues = list_quiet_issues_assigned_to(context.team, context.user, quiet_days=QUIET_DAYS, limit=QUIET_ISSUES)
     if not issues:
@@ -101,7 +114,7 @@ def _quiet_assigned(context: Context) -> list[Candidate]:
             relevance=1.0,
             title=ASSIGNED_QUIET_ONE.format(issue=name) if one else ASSIGNED_QUIET_MANY.format(n=len(issues)),
             detail=ASSIGNED_QUIET_ONE_DETAIL if one else AND_MORE.format(issue=name, n=len(issues) - 1),
-            url=f"/error_tracking/{issues[0].id}" if one else "/error_tracking",
+            url=f"/error_tracking/{issues[0].id}" if one else _assigned_issues_url(context),
         )
     ]
 

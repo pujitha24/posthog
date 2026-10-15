@@ -5,6 +5,8 @@ from posthog.test.base import BaseTest, ClickhouseTestMixin, _create_event, flus
 
 from django.utils import timezone
 
+from parameterized import parameterized
+
 from products.product_tours.backend.models import ProductTour
 from products.surveys.backend.facade.api import SurveyResponses, list_running_survey_responses
 from products.surveys.backend.models import Survey, SurveyResponseArchive
@@ -70,4 +72,27 @@ class TestListRunningSurveyResponses(ClickhouseTestMixin, BaseTest):
 
         assert list_running_survey_responses(self.team, self.user, limit=20) == [
             SurveyResponses(survey_id=running.id, name="Onboarding feedback", this_week=4, last_week=1)
+        ]
+
+    @parameterized.expand([("smaller_uuid_first", False), ("larger_uuid_first", True)])
+    def test_leaves_out_an_archived_submission_whose_events_share_a_timestamp(
+        self, _name: str, larger_first: bool
+    ) -> None:
+        survey = self._survey("Onboarding feedback")
+        at = self._ago(1)
+        smaller, larger = "00000000-0000-4000-8000-000000000001", "ffffffff-ffff-4fff-bfff-ffffffffffff"
+        for event_uuid in (larger, smaller) if larger_first else (smaller, larger):
+            _create_event(
+                team=self.team,
+                event="survey sent",
+                distinct_id="person",
+                event_uuid=event_uuid,
+                properties={"$survey_id": str(survey.id), "$survey_submission_id": "submission-a"},
+                timestamp=at,
+            )
+        SurveyResponseArchive.objects.create(team=self.team, survey=survey, response_uuid=larger)
+        flush_persons_and_events()
+
+        assert list_running_survey_responses(self.team, self.user, limit=20) == [
+            SurveyResponses(survey_id=survey.id, name="Onboarding feedback", this_week=0, last_week=0)
         ]

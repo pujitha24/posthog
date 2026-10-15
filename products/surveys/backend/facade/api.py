@@ -24,7 +24,7 @@ SELECT survey_id,
 FROM (
     SELECT properties.$survey_id AS survey_id,
            {grouping_key} AS submission_key,
-           argMax(uuid, timestamp) AS representative_uuid,
+           argMax(uuid, tuple(timestamp, uuid)) AS representative_uuid,
            max(timestamp) AS submitted_at
     FROM events
     WHERE timestamp >= now() - INTERVAL 14 DAY AND {response_events} AND properties.$survey_id IN {survey_ids}

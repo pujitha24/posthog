@@ -70,7 +70,7 @@ def list_flags_created_by(team_id: int, user_id: int, *, limit: int) -> list[Cre
         :limit
     ]
     rows = list(flags.values_list("id", "key", "created_at"))
-    owned = owned_flag_ids(FeatureFlag.objects.filter(id__in=[id for id, _, _ in rows]))
+    owned = owned_flag_ids(FeatureFlag.objects.filter(team_id=team_id, id__in=[id for id, _, _ in rows]))
     return [CreatedFlag(id=id, key=key, created_at=created_at, owned=id in owned) for id, key, created_at in rows]
 
 

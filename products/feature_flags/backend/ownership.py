@@ -1,5 +1,8 @@
 from typing import TYPE_CHECKING
 
+from django.db.models import F
+from django.db.models.lookups import In
+
 from rest_framework import serializers
 
 from products.feature_flags.backend.facade.config import detect_config_format
@@ -78,7 +81,7 @@ def owned_flag_ids(flags: "QuerySet[FeatureFlag]") -> set[int]:
         relation = relations[accessor]
         objects = getattr(relation.related_model, manager or "_default_manager")
         owned.update(
-            objects.filter(**{f"{relation.field.name}__in": flags.values("pk")}).values_list(
+            objects.filter(In(F(relation.field.attname), flags.values("pk"))).values_list(
                 relation.field.attname, flat=True
             )
         )

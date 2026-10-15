@@ -18672,6 +18672,13 @@ export namespace Schemas {
       percent_complete: number | null;
     }
 
+    export interface RealtimeCohortRef {
+      /** ID of the realtime cohort. */
+      id: number;
+      /** Name of the realtime cohort. */
+      name: string;
+    }
+
     export interface BlastRadius {
       /** Number of users matching the filters */
       affected: number;
@@ -18687,6 +18694,8 @@ export namespace Schemas {
       confirm_token: string;
       /** Set when the audience is one realtime cohort. 'affected' is then the cohort's last calculated size, and a batch run waits until the cohort is ready. */
       realtime_cohort?: RealtimeCohortStatus | null;
+      /** Set when a realtime cohort shares the audience with other conditions. Saving that audience fails: a realtime cohort has to be the only condition. */
+      realtime_cohort_with_other_conditions?: RealtimeCohortRef | null;
     }
 
     /**

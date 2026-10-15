@@ -78,10 +78,11 @@ def _rage_facts(context: Context) -> RageFacts:
 
 
 def _error_item(context: Context, page: RagePage, errors: ErrorsBeforeRage, title: str) -> Candidate | None:
+    issue_id = errors.issue_id
     share = errors.issue_sessions / errors.sessions if errors.sessions else 0
-    if errors.issue_id is None or errors.issue_sessions < MIN_ERROR_SESSIONS or share < MIN_ERROR_SHARE:
+    if issue_id is None or errors.issue_sessions < MIN_ERROR_SESSIONS or share < MIN_ERROR_SHARE:
         return None
-    issue = get_issue_basics(context.team.id, errors.issue_id)
+    issue = context.guard("rage_issue", lambda: get_issue_basics(context.team.id, issue_id), None)
     if issue is None:
         return None
     name = f"{issue.name or 'Issue'}: {issue.description}" if issue.description else issue.name or "Issue"
@@ -93,8 +94,8 @@ def _error_item(context: Context, page: RagePage, errors: ErrorsBeforeRage, titl
         relevance=1.0,
         title=title,
         detail=RAGE_PAGE_ERROR_DETAIL.format(pct=f"{share * 100:.0f}", issue=short(name, 50)),
-        url=f"/error_tracking/{errors.issue_id}",
-        ref=errors.issue_id,
+        url=f"/error_tracking/{issue_id}",
+        ref=issue_id,
     )
 
 

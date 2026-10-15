@@ -51,6 +51,15 @@ class TestRage(SimpleTestCase):
                 [ELEMENT_ITEM],
             ),
             (
+                "an error in too small a share of sessions",
+                True,
+                PAGE,
+                "Pay now",
+                ErrorsBeforeRage(11, str(ISSUE_ID), 3),
+                True,
+                [ELEMENT_ITEM],
+            ),
+            (
                 "a key that cannot read errors",
                 True,
                 PAGE,

@@ -1,6 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from posthog.hogql import ast
 from posthog.hogql.constants import HogQLGlobalSettings
@@ -13,14 +13,14 @@ QUERY_TIMEOUT_SECONDS = 10
 MIN_CLICKS_PER_PERSON = 10
 MIN_PEOPLE = 3
 ERROR_WINDOW_SECONDS = 30
-RAGE_PATH = r"replaceRegexpAll(coalesce(properties.$pathname, ''), '/[0-9a-f-]{8,}|/[0-9]+', '/…')"
+RAGE_PATH = "replaceRegexpAll(coalesce(properties.$pathname, ''), '/[0-9a-f-]{8,}|/[0-9]+', '/…')"
 TOP_RAGE_PAGE = f"""
 SELECT path, count() AS people, sum(clicks) AS clicks FROM (
     SELECT person_id, {RAGE_PATH} AS path, count() AS clicks
     FROM events WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick'
     GROUP BY person_id, path HAVING clicks >= {MIN_CLICKS_PER_PERSON}
 )
-GROUP BY path HAVING people >= {MIN_PEOPLE} ORDER BY people DESC
+GROUP BY path HAVING people >= {MIN_PEOPLE} ORDER BY people DESC, clicks DESC
 LIMIT 1
 """
 TOP_RAGE_ELEMENT = f"""
@@ -75,23 +75,20 @@ class ErrorsBeforeRage:
     issue_sessions: int
 
 
-def _rows(query: str, team: "Team", user: "User", name: str, path: str | None = None) -> list[list]:
-    return (
-        execute_hogql_query(
-            query,
-            team,
-            query_type=name,
-            placeholders={"path": ast.Constant(value=path)} if path is not None else {},
-            user=user,
-            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
-        ).results
-        or []
-    )
+def _rows(query: str, team: "Team", user: "User", name: str, path: str | None = None) -> list[Any]:
+    return execute_hogql_query(
+        query,
+        team,
+        query_type=name,
+        placeholders={"path": ast.Constant(value=path)} if path is not None else {},
+        user=user,
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
+    ).results
 
 
 def find_top_rage_page(team: "Team", user: "User") -> RagePage | None:
     rows = _rows(TOP_RAGE_PAGE, team, user, "web_analytics_top_rage_page")
-    return RagePage(path=rows[0][0] or "", people=rows[0][1], clicks=rows[0][2]) if rows else None
+    return RagePage(path=rows[0][0], people=rows[0][1], clicks=rows[0][2]) if rows else None
 
 
 def find_top_rage_element(team: "Team", user: "User", path: str) -> str | None:

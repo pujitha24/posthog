@@ -482,6 +482,7 @@ class TestListFailingSources(BaseTest):
         error: str = "",
         companion_of: ExternalDataJob | None = None,
         listed: bool = True,
+        started_days_ago: float | None = None,
     ) -> ExternalDataJob:
         schema, _ = ExternalDataSchema.objects.get_or_create(team_id=source.team_id, source=source, name=schema_name)
         job = ExternalDataJob.objects.create(
@@ -492,7 +493,10 @@ class TestListFailingSources(BaseTest):
             latest_error=error or None,
             schema_snapshot={"companion_of": str(companion_of.id)} if companion_of else {},
         )
-        ExternalDataJob.objects.filter(id=job.id).update(created_at=timezone.now() - timedelta(days=days_ago))
+        ExternalDataJob.objects.filter(id=job.id).update(
+            created_at=timezone.now() - timedelta(days=days_ago if started_days_ago is None else started_days_ago),
+            finished_at=timezone.now() - timedelta(days=days_ago),
+        )
         if companion_of and listed:
             ExternalDataJob.objects.filter(id=companion_of.id).update(
                 schema_snapshot={COMPANION_JOB_IDS_KEY: [str(job.id)]}
@@ -504,8 +508,9 @@ class TestListFailingSources(BaseTest):
 
     def test_ranks_by_the_failures_of_schemas_that_still_fail_and_redacts_the_newest_error(self) -> None:
         billing = self._source(description="Billing DB", prefix="billing_")
-        for days_ago in (1, 2, 3):
+        for days_ago in (1, 2):
             self._run(billing, "accounts", "Failed", days_ago, "timeout")
+        self._run(billing, "accounts", "Failed", 3, "timeout", started_days_ago=9)
         self._run(billing, "halted", "Failed", 4, "permission denied")
         ExternalDataSchema.objects.filter(source=billing, name="halted").update(
             should_sync=False, auto_disabled_at=timezone.now()
@@ -549,6 +554,25 @@ class TestListFailingSources(BaseTest):
                 failures=1,
                 latest_error="history load failed",
             ),
+        ]
+
+    @parameterized.expand([("cdc_broken",), ("cdc_extraction_paused",)])
+    def test_keeps_a_halted_cdc_schema_failing_after_a_consumer_run_completes(self, marker: str) -> None:
+        source = self._source(prefix="app_")
+        self._run(source, "orders", "Failed", 2, "capture failed")
+        self._run(source, "orders", "Completed", 1)
+        ExternalDataSchema.objects.filter(source=source, name="orders").update(
+            sync_type_config={marker: {"reason": "slot_missing"}}, latest_error="replication slot is missing"
+        )
+
+        assert self._failing() == [
+            contracts.FailingSource(
+                source_id=source.id,
+                source_type="Postgres",
+                source_label="app_",
+                failures=1,
+                latest_error="replication slot is missing",
+            )
         ]
 
     @parameterized.expand(

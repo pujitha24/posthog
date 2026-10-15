@@ -34,6 +34,51 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.generated_
 )
 from products.warehouse_sources.backend.types import ExternalDataSourceType
 
+# Shared with the API Management source, which reads the same workspace with a preset table list.
+WORKSPACE_FIELDS: list[FieldType] = [
+    SourceFieldInputConfig(
+        name="tenant_id",
+        label="Directory (tenant) ID",
+        type=SourceFieldInputConfigType.TEXT,
+        required=True,
+        placeholder="00000000-0000-0000-0000-000000000000",
+        secret=False,
+    ),
+    SourceFieldInputConfig(
+        name="client_id",
+        label="Application (client) ID",
+        type=SourceFieldInputConfigType.TEXT,
+        required=True,
+        placeholder="00000000-0000-0000-0000-000000000000",
+        secret=False,
+    ),
+    SourceFieldInputConfig(
+        name="client_secret",
+        label="Client secret",
+        type=SourceFieldInputConfigType.PASSWORD,
+        required=True,
+        placeholder="",
+        secret=True,
+    ),
+    SourceFieldInputConfig(
+        name="workspace_id",
+        label="Workspace ID",
+        type=SourceFieldInputConfigType.TEXT,
+        required=True,
+        placeholder="00000000-0000-0000-0000-000000000000",
+        secret=False,
+    ),
+]
+
+NON_RETRYABLE_ERRORS: dict[str, str | None] = {
+    "400 Client Error: Bad Request for url: https://login.microsoftonline.com": "Microsoft Entra ID rejected the app credentials. Check the tenant ID, client ID and client secret, then reconnect.",
+    "401 Client Error: Unauthorized for url: https://login.microsoftonline.com": "Microsoft Entra ID rejected the app credentials. Check the client ID and client secret, then reconnect.",
+    "401 Client Error: Unauthorized for url: https://api.loganalytics.azure.com": "Log Analytics rejected the access token. Check that the app registration is still enabled, then reconnect.",
+    "403 Client Error: Forbidden for url: https://api.loganalytics.azure.com": "The app cannot query this workspace. Give its service principal the Log Analytics Reader role on the workspace, then reconnect.",
+    "404 Client Error: Not Found for url: https://api.loganalytics.azure.com": "No Log Analytics workspace has this workspace ID. Check the workspace ID, then reconnect.",
+    "Failed to resolve table": "This table no longer exists in the workspace. Remove it from the source's table list.",
+}
+
 
 def log_analytics_schemas(table_names: list[str]) -> list[SourceSchema]:
     return [
@@ -89,38 +134,7 @@ List the tables to sync, one per line, for example `AppRequests` or `MyEvents_CL
             fields=cast(
                 list[FieldType],
                 [
-                    SourceFieldInputConfig(
-                        name="tenant_id",
-                        label="Directory (tenant) ID",
-                        type=SourceFieldInputConfigType.TEXT,
-                        required=True,
-                        placeholder="00000000-0000-0000-0000-000000000000",
-                        secret=False,
-                    ),
-                    SourceFieldInputConfig(
-                        name="client_id",
-                        label="Application (client) ID",
-                        type=SourceFieldInputConfigType.TEXT,
-                        required=True,
-                        placeholder="00000000-0000-0000-0000-000000000000",
-                        secret=False,
-                    ),
-                    SourceFieldInputConfig(
-                        name="client_secret",
-                        label="Client secret",
-                        type=SourceFieldInputConfigType.PASSWORD,
-                        required=True,
-                        placeholder="",
-                        secret=True,
-                    ),
-                    SourceFieldInputConfig(
-                        name="workspace_id",
-                        label="Workspace ID",
-                        type=SourceFieldInputConfigType.TEXT,
-                        required=True,
-                        placeholder="00000000-0000-0000-0000-000000000000",
-                        secret=False,
-                    ),
+                    *WORKSPACE_FIELDS,
                     SourceFieldInputConfig(
                         name="tables",
                         label="Tables",
@@ -134,14 +148,7 @@ List the tables to sync, one per line, for example `AppRequests` or `MyEvents_CL
         )
 
     def get_non_retryable_errors(self) -> dict[str, str | None]:
-        return {
-            "400 Client Error: Bad Request for url: https://login.microsoftonline.com": "Microsoft Entra ID rejected the app credentials. Check the tenant ID, client ID and client secret, then reconnect.",
-            "401 Client Error: Unauthorized for url: https://login.microsoftonline.com": "Microsoft Entra ID rejected the app credentials. Check the client ID and client secret, then reconnect.",
-            "401 Client Error: Unauthorized for url: https://api.loganalytics.azure.com": "Log Analytics rejected the access token. Check that the app registration is still enabled, then reconnect.",
-            "403 Client Error: Forbidden for url: https://api.loganalytics.azure.com": "The app cannot query this workspace. Give its service principal the Log Analytics Reader role on the workspace, then reconnect.",
-            "404 Client Error: Not Found for url: https://api.loganalytics.azure.com": "No Log Analytics workspace has this workspace ID. Check the workspace ID, then reconnect.",
-            "Failed to resolve table": "This table no longer exists in the workspace. Remove it from the source's table list.",
-        }
+        return NON_RETRYABLE_ERRORS
 
     def get_retryable_errors(self) -> set[str]:
         return {"Azure Log Analytics error (retryable)"}

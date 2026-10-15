@@ -23,6 +23,7 @@ from products.warehouse_sources.backend.models.table import DataWarehouseTable
 from products.warehouse_sources.backend.presentation.views.external_data_source.source_setup import (
     ExternalDataSourceSerializers,
 )
+from products.warehouse_sources.backend.temporal.data_imports.cdc.companion_jobs import COMPANION_JOB_IDS_KEY
 
 
 class TestWarehouseSourcesFacade(BaseTest):
@@ -455,3 +456,119 @@ class TestGitHubSourceCredential(BaseTest):
         self._source(_PAT_INPUTS)
 
         assert api.github_source_credential(team_id=self.team.pk, source_id=source_id) is None
+
+
+class TestListFailingSources(BaseTest):
+    def _source(self, **fields: object) -> ExternalDataSource:
+        return ExternalDataSource.objects.create(
+            **{
+                "team_id": self.team.pk,
+                "source_id": str(uuid.uuid4()),
+                "connection_id": str(uuid.uuid4()),
+                "status": "Running",
+                "source_type": "Postgres",
+                "created_by": self.user,
+                "job_inputs": {"password": "hunter2-not-a-real-secret"},
+                **fields,
+            }
+        )
+
+    def _run(
+        self,
+        source: ExternalDataSource,
+        schema_name: str,
+        status: str,
+        days_ago: float,
+        error: str = "",
+        companion_of: ExternalDataJob | None = None,
+        listed: bool = True,
+    ) -> ExternalDataJob:
+        schema, _ = ExternalDataSchema.objects.get_or_create(team_id=source.team_id, source=source, name=schema_name)
+        job = ExternalDataJob.objects.create(
+            team_id=source.team_id,
+            pipeline=source,
+            schema=schema,
+            status=status,
+            latest_error=error or None,
+            schema_snapshot={"companion_of": str(companion_of.id)} if companion_of else {},
+        )
+        ExternalDataJob.objects.filter(id=job.id).update(created_at=timezone.now() - timedelta(days=days_ago))
+        if companion_of and listed:
+            ExternalDataJob.objects.filter(id=companion_of.id).update(
+                schema_snapshot={COMPANION_JOB_IDS_KEY: [str(job.id)]}
+            )
+        return job
+
+    def _failing(self) -> list[contracts.FailingSource]:
+        return api.list_failing_sources(self.team.pk, self.user.pk, since=timezone.now() - timedelta(days=7), limit=3)
+
+    def test_ranks_by_the_failures_of_schemas_that_still_fail_and_redacts_the_newest_error(self) -> None:
+        billing = self._source(description="Billing DB", prefix="billing_")
+        for days_ago in (1, 2, 3):
+            self._run(billing, "accounts", "Failed", days_ago, "timeout")
+        self._run(billing, "halted", "Failed", 4, "permission denied")
+        ExternalDataSchema.objects.filter(source=billing, name="halted").update(
+            should_sync=False, auto_disabled_at=timezone.now()
+        )
+        source = self._source(prefix="stripe_")
+        self._run(source, "invoices", "Failed", 10, "failed before the window")
+        self._run(source, "invoices", "Failed", 3, "auth failed")
+        failed_run = self._run(source, "invoices", "Failed", 1, "auth failed with hunter2-not-a-real-secret")
+        self._run(source, "invoices", "Failed", 1, "auth failed", companion_of=failed_run)
+        self._run(source, "archived", "Failed", 1, "table deleted")
+        ExternalDataSchema.objects.filter(source=source, name="archived").update(deleted=True)
+        self._run(source, "paused", "Failed", 0.5, "sync stopped")
+        ExternalDataSchema.objects.filter(source=source, name="paused").update(should_sync=False)
+        self._run(source, "customers", "Failed", 2, "timeout")
+        self._run(source, "customers", "Completed", 0.5)
+        history = self._source(prefix="events_")
+        retried_run = self._run(history, "events", "Completed", 2)
+        self._run(history, "events", "Failed", 2, "extraction retried", companion_of=retried_run, listed=False)
+        completed_run = self._run(history, "events", "Completed", 1)
+        self._run(history, "events", "Failed", 1, "history load failed", companion_of=completed_run)
+
+        assert self._failing() == [
+            contracts.FailingSource(
+                source_id=billing.id,
+                source_type="Postgres",
+                source_label="Billing DB",
+                failures=4,
+                latest_error="timeout",
+            ),
+            contracts.FailingSource(
+                source_id=source.id,
+                source_type="Postgres",
+                source_label="stripe_",
+                failures=2,
+                latest_error="auth failed with ***",
+            ),
+            contracts.FailingSource(
+                source_id=history.id,
+                source_type="Postgres",
+                source_label="events_",
+                failures=1,
+                latest_error="history load failed",
+            ),
+        ]
+
+    @parameterized.expand(
+        [
+            ("its newest run succeeded", {}, [("Failed", 2), ("Completed", 1)]),
+            ("it failed only before the window", {}, [("Failed", 9)]),
+            ("someone else created it", {"created_by": "other"}, [("Failed", 1)]),
+            ("it is deleted", {"deleted": True}, [("Failed", 1)]),
+            ("it is in another project", {"team": "other"}, [("Failed", 1)]),
+        ]
+    )
+    def test_leaves_out_a_source_when(
+        self, _name: str, fields: dict[str, object], runs: list[tuple[str, float]]
+    ) -> None:
+        if fields.get("created_by") == "other":
+            fields = {**fields, "created_by": self._create_user("other@example.com")}
+        if fields.get("team") == "other":
+            fields = {"team_id": Team.objects.create(organization=self.organization, name="other").pk}
+        source = self._source(**fields)
+        for status, days_ago in runs:
+            self._run(source, "invoices", status, days_ago, "failed")
+
+        assert self._failing() == []

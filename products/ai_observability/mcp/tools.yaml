@@ -566,8 +566,12 @@ tools:
         description: >
             Create an evaluation. 'llm_judge': set evaluation_config.prompt and model_configuration with provider and
             model; provider_key_id may be null when no key is pinned. 'hog': evaluation_config.source (Hog returning a
-            boolean or finite number). For 'hog' and 'llm_judge', choose output_type='boolean' or 'numeric'; numeric
-            output_config accepts min, max, step, allows_na, and passing_rule. 'sentiment': output_type='sentiment',
+            boolean, a finite number, or a list of category keys). For 'hog' and 'llm_judge', choose
+            output_type='boolean' (pass or fail), 'numeric' (a score), or 'categorical' (labels). numeric output_config
+            accepts min, max, step, allows_na, and passing_rule {operator: 'gte' or 'lte', threshold}. categorical
+            output_config takes options [{key, label}], selection_mode 'single' or 'multiple', allows_na, and an
+            optional passing_rule {categories: [key]}; with multiple selection, an empty categories list means only an
+            empty result passes. Set true_is_failure only on boolean output. 'sentiment': output_type='sentiment',
             omit model_configuration, optional evaluation_config.source='user_messages'. `target` accepts 'generation'
             (default), 'trace', or 'session'. A session target runs once per `$ai_session_id` and defaults to the
             'inactivity' settle strategy. Pass `enabled` as a boolean (true to start scoring new $ai_generation events
@@ -855,8 +859,8 @@ tools:
             runs against trace-level globals, 'session' samples whole sessions that have gone quiet and runs against
             session-level globals. For trace previews, pass target_config.window_seconds to match the saved evaluation's
             aggregation window; for session previews, pass target_config.quiet_period_seconds to match its quiet period.
-            Returns per-sample raw boolean or numeric results, N/A when allowed, errors, reasoning, and input/output
-            previews. Use this to validate Hog code before creating or updating a 'hog' type evaluation.
+            Returns per-sample raw boolean, numeric, or categorical results, N/A when allowed, errors, reasoning, and
+            input/output previews. Use this to validate Hog code before creating or updating a 'hog' type evaluation.
     llma-evaluation-update:
         operation: evaluations_partial_update
         enabled: true
@@ -869,9 +873,11 @@ tools:
         title: Update evaluation
         description: >
             Partially update an AI observability evaluation. Requires the evaluation `id` (UUID). If you don't have it,
-            call llma-evaluation-list first to look it up by name. Changing to or from numeric output requires a new
-            evaluation; for numeric evaluations, update output_config to change bounds, N/A handling, or passing_rule. A
-            passing rule has operator 'gte' or 'lte' and a finite threshold. Rule edits reinterpret historical scores;
+            call llma-evaluation-list first to look it up by name. Changing to or from numeric or categorical output
+            requires a new evaluation. For numeric evaluations, update output_config to change bounds, N/A handling, or
+            passing_rule, which has operator 'gte' or 'lte' and a finite threshold. For categorical evaluations, update
+            options, selection_mode, allows_na, or passing_rule {categories: [key]}. Rule edits reinterpret historical
+            results;
             saved reports stay unchanged. Toggle enabled, change its runtime type or evaluation config, or change the
             model for an llm_judge. When switching to llm_judge, include model_configuration with provider and model.
             When an llm_judge remains an llm_judge, omit model_configuration to keep its current model or provide both

@@ -51,7 +51,7 @@ def list_running_survey_responses(team: Team, user: User, *, limit: int) -> list
         query_type="surveys_running_weekly_responses",
         placeholders={"survey_ids": ast.Tuple(exprs=[ast.Constant(value=str(survey_id)) for survey_id, _ in surveys])},
         user=user,
-        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
     )
     counts = {str(survey_id): (this_week, last_week) for survey_id, this_week, last_week in result.results or []}
     return [

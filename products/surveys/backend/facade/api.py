@@ -3,6 +3,7 @@ from uuid import UUID
 
 from posthog.hogql import ast
 from posthog.hogql.constants import HogQLGlobalSettings
+from posthog.hogql.parser import parse_expr
 from posthog.hogql.query import execute_hogql_query
 
 from posthog.models import Team, User
@@ -16,12 +17,12 @@ from products.surveys.backend.models import Survey
 from products.surveys.backend.responses.fetch_rows import RESPONSE_EVENT_FILTER, SUBMISSION_GROUPING_KEY
 
 QUERY_TIMEOUT_SECONDS = 10
-WEEKLY_RESPONSES = f"""
+WEEKLY_RESPONSES = """
 SELECT properties.$survey_id AS survey_id,
-       uniqIf({SUBMISSION_GROUPING_KEY}, timestamp >= now() - INTERVAL 7 DAY) AS this_week,
-       uniqIf({SUBMISSION_GROUPING_KEY}, timestamp < now() - INTERVAL 7 DAY) AS last_week
+       uniqIf({grouping_key}, timestamp >= now() - INTERVAL 7 DAY) AS this_week,
+       uniqIf({grouping_key}, timestamp < now() - INTERVAL 7 DAY) AS last_week
 FROM events
-WHERE timestamp >= now() - INTERVAL 14 DAY AND {RESPONSE_EVENT_FILTER} AND properties.$survey_id IN {{survey_ids}}
+WHERE timestamp >= now() - INTERVAL 14 DAY AND {response_events} AND properties.$survey_id IN {survey_ids}
 GROUP BY survey_id
 """
 
@@ -49,20 +50,20 @@ def list_running_survey_responses(team: Team, user: User, *, limit: int) -> list
         WEEKLY_RESPONSES,
         team,
         query_type="surveys_running_weekly_responses",
-        placeholders={"survey_ids": ast.Tuple(exprs=[ast.Constant(value=str(survey_id)) for survey_id, _ in surveys])},
+        placeholders={
+            "grouping_key": parse_expr(SUBMISSION_GROUPING_KEY),
+            "response_events": parse_expr(RESPONSE_EVENT_FILTER),
+            "survey_ids": ast.Tuple(exprs=[ast.Constant(value=str(survey_id)) for survey_id, _ in surveys]),
+        },
         user=user,
         settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
     )
-    counts = {str(survey_id): (this_week, last_week) for survey_id, this_week, last_week in result.results or []}
-    return [
-        SurveyResponses(
-            survey_id=survey_id,
-            name=name,
-            this_week=counts.get(str(survey_id), (0, 0))[0],
-            last_week=counts.get(str(survey_id), (0, 0))[1],
-        )
-        for survey_id, name in surveys
-    ]
+    counts = {survey_id: (this_week, last_week) for survey_id, this_week, last_week in result.results}
+    responses = []
+    for survey_id, name in surveys:
+        this_week, last_week = counts.get(str(survey_id), (0, 0))
+        responses.append(SurveyResponses(survey_id=survey_id, name=name, this_week=this_week, last_week=last_week))
+    return responses
 
 
 __all__ = [

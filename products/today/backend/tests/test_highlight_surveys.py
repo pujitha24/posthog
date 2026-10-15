@@ -1,5 +1,4 @@
 import uuid
-from datetime import date
 from types import SimpleNamespace
 from typing import cast
 
@@ -18,7 +17,7 @@ from products.today.backend.logic.highlight_types import Context
 class TestSurveys(SimpleTestCase):
     @parameterized.expand(
         [
-            ("first responses", 6, 0, True),
+            ("first responses", 5, 0, True),
             ("at least one and a half times last week", 6, 4, True),
             ("not enough growth", 6, 5, False),
             ("too few responses", 4, 0, False),
@@ -30,9 +29,7 @@ class TestSurveys(SimpleTestCase):
         survey = SurveyResponses(
             survey_id=uuid.uuid4(), name="Onboarding feedback", this_week=this_week, last_week=last_week
         )
-        context = cast(
-            Context, SimpleNamespace(team=SimpleNamespace(id=1), user=SimpleNamespace(id=2), today=date(2026, 10, 13))
-        )
+        context = cast(Context, SimpleNamespace(team=None, user=None))
         registered = next(s for s in load_sources() if s.name == "surveys")
 
         with patch.object(surveys, "list_running_survey_responses", return_value=[survey]):

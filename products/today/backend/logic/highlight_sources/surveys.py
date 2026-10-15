@@ -5,7 +5,7 @@ from ..highlight_rules import exact, short
 from ..highlight_types import Candidate, Context, Found, Source
 
 SURVEY_RESPONSES = "Survey ‘{survey}’ received {now} responses in the last 7 days"
-CHANGE = "{before} → {now}"
+SURVEY_RESPONSES_DETAIL = "{before} → {now}"
 MIN_RESPONSES = 5
 GROWTH = 1.5
 
@@ -28,8 +28,8 @@ def _candidate(survey: SurveyResponses) -> Candidate:
         family="surveys",
         importance=0.4,
         relevance=1.0,
-        title=SURVEY_RESPONSES.format(survey=short(survey.name, 60), now=survey.this_week),
-        detail=CHANGE.format(before=exact(survey.last_week), now=exact(survey.this_week)),
+        title=SURVEY_RESPONSES.format(survey=short(survey.name), now=exact(survey.this_week)),
+        detail=SURVEY_RESPONSES_DETAIL.format(before=exact(survey.last_week), now=exact(survey.this_week)),
         url=f"/surveys/{survey.survey_id}",
     )
 

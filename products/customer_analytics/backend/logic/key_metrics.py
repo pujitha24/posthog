@@ -5,6 +5,8 @@ from typing import Any, cast
 
 from django.utils import timezone
 
+from posthog.schema import HogQLQueryModifiers
+
 from posthog.hogql import ast
 from posthog.hogql.constants import HogQLGlobalSettings
 from posthog.hogql.parser import parse_expr, parse_select
@@ -33,7 +35,14 @@ THIS_WEEK = "timestamp >= toStartOfDay(now()) - INTERVAL 7 DAY"
 def key_metrics_fingerprint(team: Team) -> str:
     config = team.customer_analytics_config
     nodes = {key: getattr(config, key, None) for key, _name, _people in KEY_METRICS}
-    return hashlib.sha256(json.dumps(nodes, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    action_ids = [
+        int(node["id"]) for node in nodes.values() if isinstance(node, dict) and node.get("kind") == "ActionsNode"
+    ]
+    actions = {
+        action_id: repr(condition)
+        for action_id, condition in action_filter_conditions(team=team, action_ids=action_ids).items()
+    }
+    return hashlib.sha256(json.dumps([nodes, actions], sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 def key_metrics(team: Team, user: User) -> list[KeyMetric]:
@@ -118,7 +127,8 @@ def _rows(query: ast.SelectQuery, team: Team, user: User, name: str) -> list[lis
             team,
             query_type=name,
             user=user,
-            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
+            modifiers=HogQLQueryModifiers(convertToProjectTimezone=True),
+            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
         ).results
         or []
     )

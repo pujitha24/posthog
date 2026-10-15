@@ -12,7 +12,8 @@ from posthog.test.persons import create_person
 
 from products.access_control.backend.facade.api import upsert_property_access_control
 from products.access_control.backend.facade.contracts import PropertyAccessLevel, UpsertPropertyAccessControlInput
-from products.customer_analytics.backend.facade.api import get_key_metrics
+from products.actions.backend.models.action import Action
+from products.customer_analytics.backend.facade.api import get_key_metrics, get_key_metrics_fingerprint
 
 
 class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
@@ -74,3 +75,18 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
             ({m.key: (m.this_week, m.last_week) for m in metrics}, {m.key: len(m.daily) for m in metrics}),
             (expected, {"signup_event": 35, "activity_event": 35}),
         )
+
+    def test_the_fingerprint_changes_when_a_referenced_action_changes_or_goes(self) -> None:
+        action = Action.objects.create(team=self.team, name="Paid", steps_json=[{"event": "paid"}])
+        config = self.team.customer_analytics_config
+        config.payment_event = {"kind": "ActionsNode", "id": action.id}
+        config.save()
+        prints = [get_key_metrics_fingerprint(self.team)]
+        action.steps_json = [{"event": "checkout completed"}]
+        action.save()
+        prints.append(get_key_metrics_fingerprint(self.team))
+        action.deleted = True
+        action.save()
+        prints.append(get_key_metrics_fingerprint(self.team))
+
+        self.assertEqual(len(set(prints)), 3)

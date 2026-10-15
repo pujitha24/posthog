@@ -17,7 +17,7 @@ KEY_METRIC_DAY_DETAIL_WEEK = "{now} yesterday · {usual} a day over the week bef
 
 def find(context: Context) -> Found:
     metrics = context.daily(
-        f"key_metrics:{get_key_metrics_fingerprint(context.team)}",
+        f"key_metrics:{context.user.id}:{get_key_metrics_fingerprint(context.team)}",
         lambda: get_key_metrics(team=context.team, user=context.user),
     )
     shown = [metric for metric in metrics if metric.this_week or metric.last_week]

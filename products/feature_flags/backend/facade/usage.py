@@ -94,7 +94,7 @@ def summarize_flag_calls(team: Team, user: User) -> FlagCallSummary:
         team,
         query_type="feature_flags_call_summary",
         user=user,
-        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
     )
     rows = result.results or []
     return FlagCallSummary(

@@ -12,7 +12,7 @@ loses a field surfaces at the facade boundary instead of further down the caller
 (``facade.models``, ``facade.queries``); as they convert, their contracts land here too.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -49,3 +49,17 @@ class SavedInsightDefinition:
     short_id: str
     name: str | None
     query: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class InsightSeries:
+    short_id: str
+    name: str | None
+    series: dict[str, list[tuple[date, float]]]
+    period: str
+    averaged: bool
+    event_name: str
+    value_format: str | None = None
+    value_prefix: str | None = None
+    value_postfix: str | None = None
+    decimal_places: int | None = None

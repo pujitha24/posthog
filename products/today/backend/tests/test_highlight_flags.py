@@ -46,7 +46,13 @@ SAME = calls(people=50, calls_this_week=200_000, values=1)
 
 class TestFlags(SimpleTestCase):
     def _find(
-        self, today: date, created_flags: list[CreatedFlag], by_key: dict[str, FlagCalls], *, complete: bool = True
+        self,
+        today: date,
+        created_flags: list[CreatedFlag],
+        by_key: dict[str, FlagCalls],
+        *,
+        complete: bool = True,
+        covers_all_environments: bool = True,
     ) -> list[tuple[str, str, str | None]]:
         context = cast(
             Context,
@@ -58,9 +64,10 @@ class TestFlags(SimpleTestCase):
             ),
         )
         registered = next(s for s in load_sources() if s.name == "flags")
+        summary = FlagCallSummary(by_key=by_key, complete=complete, covers_all_environments=covers_all_environments)
         with (
             patch.object(flags, "list_flags_created_by", return_value=created_flags),
-            patch.object(flags, "summarize_flag_calls", return_value=FlagCallSummary(by_key=by_key, complete=complete)),
+            patch.object(flags, "summarize_flag_calls", return_value=summary),
         ):
             return [(c.title, c.detail, c.url) for c in registered.find(context).items]
 
@@ -80,26 +87,45 @@ class TestFlags(SimpleTestCase):
 
     @parameterized.expand(
         [
-            ("unused", created("old-banner", 30), {}, True, "Flag ‘old-banner’ had no evaluations in the last 14 days"),
+            ("unused", created("old-banner", 30), {}, {}, "Flag ‘old-banner’ had no evaluations in the last 14 days"),
             (
                 "same value",
                 created("old-banner", 30),
                 {"old-banner": SAME},
-                True,
+                {},
                 "Flag ‘old-banner’ is true for everyone",
             ),
-            ("unused but the call list is cut", created("old-banner", 30), {}, False, None),
-            ("too new", created("old-banner", 13), {}, True, None),
-            ("blocked by an experiment or a reference", created("old-banner", 30, blocked=True), {}, True, None),
-            ("a remote configuration", created("old-banner", 30, remote_configuration=True), {}, True, None),
-            ("risky to remove", created("kill-switch", 30), {}, True, None),
-            ("a survey flag", created("survey-targeting-abc", 30), {}, True, None),
+            ("unused but the call list is cut", created("old-banner", 30), {}, {"complete": False}, None),
+            (
+                "unused in one of several environments",
+                created("old-banner", 30),
+                {},
+                {"covers_all_environments": False},
+                None,
+            ),
+            (
+                "same value in one of several environments",
+                created("old-banner", 30),
+                {"old-banner": SAME},
+                {"covers_all_environments": False},
+                None,
+            ),
+            ("too new", created("old-banner", 13), {}, {}, None),
+            ("blocked by an experiment or a reference", created("old-banner", 30, blocked=True), {}, {}, None),
+            ("a remote configuration", created("old-banner", 30, remote_configuration=True), {}, {}, None),
+            ("risky to remove", created("kill-switch", 30), {}, {}, None),
+            ("a survey flag", created("survey-targeting-abc", 30), {}, {}, None),
         ]
     )
     def test_monday_cleanup_names_an_unused_or_same_value_flag(
-        self, _name: str, flag: CreatedFlag, by_key: dict[str, FlagCalls], complete: bool, title: str | None
+        self,
+        _name: str,
+        flag: CreatedFlag,
+        by_key: dict[str, FlagCalls],
+        evidence: dict[str, bool],
+        title: str | None,
     ) -> None:
-        found = self._find(MONDAY, [flag], by_key, complete=complete)
+        found = self._find(MONDAY, [flag], by_key, **evidence)
 
         self.assertEqual([t for t, _, _ in found], [title] if title else [])
 

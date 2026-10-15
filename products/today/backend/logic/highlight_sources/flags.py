@@ -53,7 +53,7 @@ def find(context: Context) -> Found:
         calls = summary.by_key.get(flag.key, NO_CALLS)
         if calls.people_last_week >= MIN_REACH and calls.people_this_week <= calls.people_last_week / 2:
             items.append(_reach_drop(flag, calls))
-        if flag.removal_blocked or RISKY_FLAGS.search(flag.key):
+        if flag.removal_blocked or RISKY_FLAGS.search(flag.key) or not summary.covers_all_environments:
             continue
         age = (context.today - timezone.localtime(flag.created_at, context.team.timezone_info).date()).days
         if age >= SAME_VALUE_MIN_AGE_DAYS and calls.people_this_week >= MIN_REACH and calls.values_this_week == 1:

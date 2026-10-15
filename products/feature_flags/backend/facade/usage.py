@@ -64,11 +64,12 @@ class FlagCalls:
 class FlagCallSummary:
     by_key: Mapping[str, FlagCalls]
     complete: bool
+    covers_all_environments: bool
 
 
 def list_flags_created_by(team_id: int, user_id: int, *, limit: int) -> list[CreatedFlag]:
     flags = list(
-        FeatureFlag.objects.filter(team_id=team_id, created_by_id=user_id, deleted=False)
+        FeatureFlag.objects.filter(team_id=team_id, created_by_id=user_id, deleted=False, archived=False)
         .only("id", "team_id", "key", "created_at", "is_remote_configuration")
         .order_by("created_at")[:limit]
     )
@@ -101,6 +102,7 @@ def summarize_flag_calls(team: Team, user: User) -> FlagCallSummary:
     return FlagCallSummary(
         by_key={row[0]: FlagCalls(**dict(zip(columns[1:], row[1:]))) for row in rows if row[0]},
         complete=len(rows) < FLAG_CALL_LIMIT and all(row[0] for row in rows),
+        covers_all_environments=not Team.objects.filter(project_id=team.project_id).exclude(id=team.id).exists(),
     )
 
 

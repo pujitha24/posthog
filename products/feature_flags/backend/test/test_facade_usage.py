@@ -31,6 +31,7 @@ class TestListFlagsCreatedBy(BaseTest):
             team=self.team, key="app-settings", created_by=self.user, is_remote_configuration=True
         )
         FeatureFlag.objects.create(team=self.team, key="deleted", created_by=self.user, deleted=True)
+        FeatureFlag.objects.create(team=self.team, key="archived", created_by=self.user, archived=True, active=False)
         FeatureFlag.objects.create(team=self.team, key="theirs", created_by=self._create_user("other@example.com"))
         FeatureFlag.objects.create(
             team=Team.objects.create(organization=self.organization), key="elsewhere", created_by=self.user
@@ -92,7 +93,10 @@ class TestSummarizeFlagCalls(ClickhouseTestMixin, BaseTest):
             values_this_week=1,
             value_this_week="true",
         )
-        self.assertEqual((dict(summary.by_key), summary.complete), ({"checkout": expected} if counted else {}, True))
+        self.assertEqual(
+            (dict(summary.by_key), summary.complete, summary.covers_all_environments),
+            ({"checkout": expected} if counted else {}, True, True),
+        )
 
     def test_a_call_without_a_readable_flag_key_marks_the_summary_incomplete(self) -> None:
         _create_person(team=self.team, distinct_ids=["user-1"])
@@ -108,3 +112,8 @@ class TestSummarizeFlagCalls(ClickhouseTestMixin, BaseTest):
         summary = summarize_flag_calls(self.team, self.user)
 
         self.assertEqual((dict(summary.by_key), summary.complete), ({}, False))
+
+    def test_a_project_with_another_environment_is_not_fully_covered(self) -> None:
+        Team.objects.create(organization=self.organization, project=self.project, parent_team=self.team, name="Staging")
+
+        self.assertFalse(summarize_flag_calls(self.team, self.user).covers_all_environments)

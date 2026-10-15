@@ -16,7 +16,7 @@ from posthog.hogql.visitor import clone_expr
 
 from posthog.models import Team, User
 
-from products.actions.backend.facade.api import action_filter_conditions
+from products.actions.backend.facade.api import action_filter_conditions, action_revisions
 from products.customer_analytics.backend.facade.contracts import KeyMetric
 
 KEY_METRICS = {
@@ -51,10 +51,8 @@ def _configured_nodes(team: Team) -> dict[str, dict[str, Any]]:
     }
 
 
-def _action_conditions(team: Team, nodes: dict[str, dict[str, Any]]) -> dict[int, ast.Expr]:
-    return action_filter_conditions(
-        team=team, action_ids=[int(node["id"]) for node in nodes.values() if node["kind"] == "ActionsNode"]
-    )
+def _action_ids(nodes: dict[str, dict[str, Any]]) -> list[int]:
+    return [int(node["id"]) for node in nodes.values() if node["kind"] == "ActionsNode"]
 
 
 def _condition(node: dict[str, Any], team: Team, actions: dict[int, ast.Expr]) -> ast.Expr:
@@ -86,14 +84,13 @@ def _run(query: ast.SelectQuery, team: Team, user: User, query_type: str) -> lis
 
 def key_metrics_fingerprint(team: Team) -> str:
     nodes = _configured_nodes(team)
-    actions = {action_id: repr(condition) for action_id, condition in _action_conditions(team, nodes).items()}
-    payload = [nodes, actions, team.test_account_filters]
+    payload = [nodes, action_revisions(team=team, action_ids=_action_ids(nodes)), team.test_account_filters]
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 def key_metrics(team: Team, user: User) -> list[KeyMetric]:
     nodes = _configured_nodes(team)
-    actions = _action_conditions(team, nodes)
+    actions = action_filter_conditions(team=team, action_ids=_action_ids(nodes))
     conditions = {
         key: _condition(node, team, actions)
         for key, node in nodes.items()

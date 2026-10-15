@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+import time_machine
 from posthog.test.base import BaseTest, ClickhouseTestMixin, _create_event, flush_persons_and_events
 
 from django.utils import timezone
@@ -92,22 +93,36 @@ class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
             (expected, {"signup_event": 35, "activity_event": 35}),
         )
 
-    def test_the_fingerprint_changes_when_an_action_or_the_test_account_filters_change(self) -> None:
-        action = Action.objects.create(team=self.team, name="Paid", steps_json=[{"event": "paid"}])
-        config = self.team.customer_analytics_config
-        config.payment_event = {"kind": "ActionsNode", "id": action.id}
-        config.save()
-        prints = [get_key_metrics_fingerprint(self.team)]
-        action.steps_json = [{"event": "checkout completed"}]
-        action.save()
-        prints.append(get_key_metrics_fingerprint(self.team))
-        action.deleted = True
-        action.save()
-        prints.append(get_key_metrics_fingerprint(self.team))
-        self.team.test_account_filters = [
-            {"key": "email", "value": "@example.com", "operator": "not_icontains", "type": "person"}
-        ]
-        self.team.save()
-        prints.append(get_key_metrics_fingerprint(self.team))
+    def test_the_fingerprint_changes_only_when_an_action_or_the_test_account_filters_change(self) -> None:
+        with time_machine.travel("2026-03-02T09:00:00Z", tick=False) as traveller:
+            action = Action.objects.create(
+                team=self.team,
+                name="Paid",
+                steps_json=[
+                    {
+                        "event": "paid",
+                        "properties": [
+                            {"key": "plan_started", "value": "-7d", "operator": "is_date_after", "type": "event"}
+                        ],
+                    }
+                ],
+            )
+            config = self.team.customer_analytics_config
+            config.payment_event = {"kind": "ActionsNode", "id": action.id}
+            config.save()
+            prints = [get_key_metrics_fingerprint(self.team)]
+            traveller.shift(timedelta(hours=1))
+            prints.append(get_key_metrics_fingerprint(self.team))
+            action.steps_json = [{"event": "checkout completed"}]
+            action.save()
+            prints.append(get_key_metrics_fingerprint(self.team))
+            action.deleted = True
+            action.save()
+            prints.append(get_key_metrics_fingerprint(self.team))
+            self.team.test_account_filters = [
+                {"key": "email", "value": "@example.com", "operator": "not_icontains", "type": "person"}
+            ]
+            self.team.save()
+            prints.append(get_key_metrics_fingerprint(self.team))
 
-        self.assertEqual(len(set(prints)), 4)
+        self.assertEqual((prints[0], len(set(prints[1:]))), (prints[1], 4))

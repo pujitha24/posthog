@@ -17,7 +17,7 @@ const ROW_LIFETIME_DAYS: u64 = 9;
 
 pub type Item = HashMap<String, AttributeValue>;
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum RowError {
     #[error("key row has no {0}")]
     Missing(&'static str),

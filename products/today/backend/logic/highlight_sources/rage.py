@@ -1,0 +1,116 @@
+import re
+
+from django.core.cache import cache
+
+from posthog.dataclasses import frozen
+
+from products.error_tracking.backend.facade.api import get_issue_basics
+from products.web_analytics.backend.facade.rage_pages import (
+    ErrorsBeforeRage,
+    RagePage,
+    find_errors_before_rage,
+    find_top_rage_element,
+    find_top_rage_page,
+)
+
+from ...facade.enums import HighlightLabel
+from ..highlight_rules import human, short, users, uses_product
+from ..highlight_types import Candidate, Context, Found, Source
+
+RAGE_PAGE = "{people} rage-clicked on {page} in the last 7 days"
+RAGE_PAGE_DETAIL = "{clicks} rage clicks · Top element: ‘{element}’"
+RAGE_PAGE_NO_ELEMENT_DETAIL = "{clicks} rage clicks"
+RAGE_PAGE_ERROR_DETAIL = "{pct}% of sessions saw the error ‘{issue}’ in the 30 seconds before"
+
+RAGE_PRODUCTS = ("Session replay", "Web analytics", "Heatmaps")
+MIN_ERROR_SESSIONS = 3
+MIN_ERROR_SHARE = 0.3
+DAY_SECONDS = 24 * 60 * 60
+NO_ERRORS = ErrorsBeforeRage(sessions=0, issue_id=None, issue_sessions=0)
+
+
+@frozen
+class RageFacts:
+    page: RagePage | None
+    element: str | None = None
+    errors: ErrorsBeforeRage = NO_ERRORS
+
+
+def find(context: Context) -> Found:
+    if not uses_product(context, *RAGE_PRODUCTS):
+        return Found()
+    facts = _daily_facts(context)
+    page = facts.page
+    if page is None:
+        return Found()
+    title = RAGE_PAGE.format(people=users(page.people), page=(re.sub(r"^/project/[^/]+", "", page.path) or "/")[:40])
+    error = _error_item(context, page, facts.errors, title) if context.allows("error_tracking:read") else None
+    if error is not None:
+        return Found(items=(error,))
+    element = short(facts.element or "", 30)
+    clicks = human(page.clicks)
+    return Found(
+        items=(
+            Candidate(
+                key=f"rage:{page.path}",
+                label=HighlightLabel.RISK,
+                family="replay",
+                importance=0.35,
+                relevance=1.0,
+                title=title,
+                detail=RAGE_PAGE_DETAIL.format(clicks=clicks, element=element)
+                if element
+                else RAGE_PAGE_NO_ELEMENT_DETAIL.format(clicks=clicks),
+                url="/replay/home",
+            ),
+        )
+    )
+
+
+def _daily_facts(context: Context) -> RageFacts:
+    key = f"today_highlights:rage_facts:v1:{context.team.id}:{context.restrictions}:{context.today.isoformat()}"
+    cached = cache.get(key)
+    if isinstance(cached, RageFacts):
+        return cached
+    failures = len(context.failures)
+    page = find_top_rage_page(context.team, context.user)
+    facts = (
+        RageFacts(
+            page=page,
+            element=context.guard(
+                "rage_element", lambda: find_top_rage_element(context.team, context.user, page.path), None
+            ),
+            errors=context.guard(
+                "rage_errors", lambda: find_errors_before_rage(context.team, context.user, page.path), NO_ERRORS
+            ),
+        )
+        if page
+        else RageFacts(page=None)
+    )
+    if len(context.failures) == failures:
+        cache.set(key, facts, DAY_SECONDS)
+    return facts
+
+
+def _error_item(context: Context, page: RagePage, errors: ErrorsBeforeRage, title: str) -> Candidate | None:
+    share = errors.issue_sessions / errors.sessions if errors.sessions else 0
+    if errors.issue_id is None or errors.sessions < MIN_ERROR_SESSIONS or share < MIN_ERROR_SHARE:
+        return None
+    issue = get_issue_basics(context.team.id, errors.issue_id)
+    if issue is None:
+        return None
+    name = f"{issue.name or 'Issue'}: {issue.description}" if issue.description else issue.name or "Issue"
+    return Candidate(
+        key=f"rage:{page.path}",
+        label=HighlightLabel.RISK,
+        family="replay",
+        importance=0.6,
+        relevance=1.0,
+        title=title,
+        detail=RAGE_PAGE_ERROR_DETAIL.format(pct=f"{share * 100:.0f}", issue=short(name, 50)),
+        url=f"/error_tracking/{errors.issue_id}",
+        ref=errors.issue_id,
+    )
+
+
+SOURCE = Source(name="rage", find=find)

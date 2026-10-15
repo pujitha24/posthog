@@ -36,13 +36,13 @@ SELECT person_id FROM events
 WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick' AND {RAGE_PATH} = {{path}}
 GROUP BY person_id HAVING count() >= {MIN_CLICKS_PER_PERSON}
 """
-QUALIFYING_SESSIONS = f"""
-SELECT `$session_id` AS session_id, min(timestamp) AS first_rage FROM events
-WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick' AND `$session_id` != ''
-  AND {RAGE_PATH} = {{path}} AND person_id IN ({QUALIFYING_PEOPLE})
-GROUP BY session_id
-"""
 ERRORS_BEFORE_RAGE = f"""
+WITH qualifying_sessions AS MATERIALIZED (
+    SELECT `$session_id` AS session_id, min(timestamp) AS first_rage FROM events
+    WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$rageclick' AND `$session_id` != ''
+      AND {RAGE_PATH} = {{path}} AND person_id IN ({QUALIFYING_PEOPLE})
+    GROUP BY session_id
+)
 SELECT r.session_id AS session_id,
        groupUniqArrayIf(
            x.issue,
@@ -50,11 +50,11 @@ SELECT r.session_id AS session_id,
            AND x.timestamp >= r.first_rage - INTERVAL {ERROR_WINDOW_SECONDS} SECOND
            AND x.timestamp <= r.first_rage
        ) AS issues
-FROM ({QUALIFYING_SESSIONS}) AS r
+FROM qualifying_sessions AS r
 LEFT JOIN (
     SELECT `$session_id` AS session_id, timestamp, toString(issue_id) AS issue FROM events
     WHERE timestamp >= now() - INTERVAL 7 DAY AND event = '$exception'
-      AND `$session_id` IN (SELECT session_id FROM ({QUALIFYING_SESSIONS}))
+      AND `$session_id` IN (SELECT session_id FROM qualifying_sessions)
 ) AS x ON x.session_id = r.session_id
 GROUP BY r.session_id
 LIMIT 10000

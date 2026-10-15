@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -61,7 +61,6 @@ class TestErrors(SimpleTestCase):
             SimpleNamespace(
                 team=SimpleNamespace(id=1, timezone_info=ZoneInfo("UTC")),
                 user=SimpleNamespace(id=2),
-                today=date(2026, 10, 13),
                 daily=lambda _name, compute: compute(),
                 guard=guard,
             ),

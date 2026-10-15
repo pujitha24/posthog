@@ -18,7 +18,7 @@ NEW_SERVER_ERROR_DETAIL = "{started} · {events} events in the last 7 days · No
 ASSIGNED_QUIET_ONE = "Your issue ‘{issue}’ had no events in the last 14 days"
 ASSIGNED_QUIET_ONE_DETAIL = "Resolve it if the fix is live"
 ASSIGNED_QUIET_MANY = "{n} of your issues had no events in the last 14 days"
-AND_MORE = "{names} and {n} more"
+AND_MORE = "‘{issue}’ and {n} more"
 
 NEW_ISSUE_CANDIDATES = 50
 NEW_ISSUES = 5
@@ -53,7 +53,7 @@ def _new_errors(context: Context) -> list[Candidate]:
 def _new_error(
     context: Context, issue: NewIssueActivity, totals: WeeklyExceptionTotals, relevant: bool
 ) -> Candidate | None:
-    name = short(_issue_name(issue.name, issue.description), 60)
+    name = short(_issue_name(issue.name, issue.description))
     started = f"Since {timezone.localtime(issue.first_seen, context.team.timezone_info).strftime('%b %-d')}"
     if issue.client_share >= 0.8 and MIN_CLIENT_USERS <= issue.users <= totals.active_users:
         share = issue.users / totals.active_users
@@ -90,7 +90,7 @@ def _quiet_assigned(context: Context) -> list[Candidate]:
     issues = list_quiet_issues_assigned_to(context.team, context.user, quiet_days=QUIET_DAYS, limit=QUIET_ISSUES)
     if not issues:
         return []
-    names = [short(_issue_name(issue.name, issue.description), 50) for issue in issues]
+    name = short(_issue_name(issues[0].name, issues[0].description), 50)
     one = len(issues) == 1
     return [
         Candidate(
@@ -99,8 +99,8 @@ def _quiet_assigned(context: Context) -> list[Candidate]:
             family="errors",
             importance=0.35,
             relevance=1.0,
-            title=ASSIGNED_QUIET_ONE.format(issue=names[0]) if one else ASSIGNED_QUIET_MANY.format(n=len(issues)),
-            detail=ASSIGNED_QUIET_ONE_DETAIL if one else AND_MORE.format(names=f"‘{names[0]}’", n=len(names) - 1),
+            title=ASSIGNED_QUIET_ONE.format(issue=name) if one else ASSIGNED_QUIET_MANY.format(n=len(issues)),
+            detail=ASSIGNED_QUIET_ONE_DETAIL if one else AND_MORE.format(issue=name, n=len(issues) - 1),
             url=f"/error_tracking/{issues[0].id}" if one else "/error_tracking",
         )
     ]

@@ -4,7 +4,7 @@ This is the ONLY module other apps are allowed to import.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 from django.db.models import QuerySet
@@ -12,6 +12,7 @@ from django.db.models import QuerySet
 import posthoganalytics
 
 from posthog.event_usage import AnalyticsProps, groups
+from posthog.models import Team, User
 
 from products.access_control.backend.facade.api import valid_role_member_user_ids
 
@@ -26,11 +27,6 @@ from ..models import (
 )
 from ..remote_config import build_error_tracking_config as build_error_tracking_config
 from . import contracts
-
-if TYPE_CHECKING:
-    from posthog.models.team import Team
-    from posthog.models.user import User
-
 from .contracts import (
     CrashFreeSummary as CrashFreeSummary,
     DocumentEmbeddingTable as DocumentEmbeddingTable,
@@ -198,16 +194,16 @@ def get_issue_basics(team_id: int, issue_id: UUID | str) -> contracts.ErrorTrack
     )
 
 
-def list_new_unassigned_issue_activity(team: "Team", user: "User", *, limit: int) -> list[contracts.NewIssueActivity]:
+def list_new_unassigned_issue_activity(team: Team, user: User, *, limit: int) -> list[contracts.NewIssueActivity]:
     return activity.new_unassigned_issue_activity(team, user, limit=limit)
 
 
-def get_weekly_exception_totals(team: "Team", user: "User") -> contracts.WeeklyExceptionTotals:
+def get_weekly_exception_totals(team: Team, user: User) -> contracts.WeeklyExceptionTotals:
     return activity.weekly_totals(team, user)
 
 
 def list_quiet_issues_assigned_to(
-    team: "Team", user: "User", *, quiet_days: int, limit: int
+    team: Team, user: User, *, quiet_days: int, limit: int
 ) -> list[contracts.ErrorTrackingIssueBasics]:
     return activity.quiet_issues_assigned_to(team, user, quiet_days=quiet_days, limit=limit)
 

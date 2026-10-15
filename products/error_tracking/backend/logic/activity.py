@@ -62,7 +62,7 @@ def _rows(query: str, team: "Team", user: "User", name: str, placeholders: dict[
             query_type=name,
             placeholders=placeholders,
             user=user,
-            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
+            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
         ).results
         or []
     )

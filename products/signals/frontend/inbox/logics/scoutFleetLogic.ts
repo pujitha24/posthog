@@ -525,13 +525,6 @@ export interface scoutFleetLogicActions {
         error: string
         errorObject?: any
     }
-    loadScoutRunsSuccess: (
-        scoutRuns: SignalScoutRunSummary[],
-        payload?: void
-    ) => {
-        scoutRuns: SignalScoutRunSummary[]
-        payload?: void
-    }
     loadScoutRunsForSkill: (skillName: string) => string
     loadScoutRunsForSkillFailure: (
         error: string,
@@ -546,6 +539,13 @@ export interface scoutFleetLogicActions {
     ) => {
         scoutRuns: SignalScoutRunSummary[]
         payload?: string
+    }
+    loadScoutRunsSuccess: (
+        scoutRuns: SignalScoutRunSummary[],
+        payload?: void
+    ) => {
+        scoutRuns: SignalScoutRunSummary[]
+        payload?: void
     }
     materializeScoutFleet: () => {
         value: true

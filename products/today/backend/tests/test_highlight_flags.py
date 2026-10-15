@@ -72,7 +72,7 @@ class TestFlags(SimpleTestCase):
             [
                 (
                     "Flag ‘checkout’ reached 75% fewer users in the last 7 days",
-                    "40 → 10 · Check its release conditions",
+                    "40 → 10 · Check the code that calls it",
                     "/feature_flags/7",
                 )
             ],

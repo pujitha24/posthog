@@ -17,7 +17,7 @@ from ..highlight_rules import exact, human
 from ..highlight_types import Candidate, Context, Found, Source
 
 REACH_DROP = "Flag ‘{flag}’ reached {pct}% fewer users in the last 7 days"
-REACH_DROP_DETAIL = "{before} → {now} · Check its release conditions"
+REACH_DROP_DETAIL = "{before} → {now} · Check the code that calls it"
 UNUSED_ONE = "Flag ‘{flag}’ had no evaluations in the last 14 days"
 UNUSED_ONE_DETAIL = "Delete it if no code uses it"
 SAME_ONE = "Flag ‘{flag}’ is {value} for everyone"

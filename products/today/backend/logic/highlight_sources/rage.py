@@ -1,7 +1,5 @@
 import re
 
-from django.core.cache import cache
-
 from posthog.dataclasses import frozen
 
 from products.error_tracking.backend.facade.api import get_issue_basics
@@ -25,7 +23,6 @@ RAGE_PAGE_ERROR_DETAIL = "{pct}% of sessions saw the error ‘{issue}’ in the 
 RAGE_PRODUCTS = ("Session replay", "Web analytics", "Heatmaps")
 MIN_ERROR_SESSIONS = 3
 MIN_ERROR_SHARE = 0.3
-DAY_SECONDS = 24 * 60 * 60
 NO_ERRORS = ErrorsBeforeRage(sessions=0, issue_id=None, issue_sessions=0)
 
 
@@ -39,7 +36,7 @@ class RageFacts:
 def find(context: Context) -> Found:
     if not uses_product(context, *RAGE_PRODUCTS):
         return Found()
-    facts = _daily_facts(context)
+    facts = context.daily("rage_facts", lambda: _rage_facts(context))
     page = facts.page
     if page is None:
         return Found()
@@ -67,29 +64,19 @@ def find(context: Context) -> Found:
     )
 
 
-def _daily_facts(context: Context) -> RageFacts:
-    key = f"today_highlights:rage_facts:v1:{context.team.id}:{context.restrictions}:{context.today.isoformat()}"
-    cached = cache.get(key)
-    if isinstance(cached, RageFacts):
-        return cached
-    failures = len(context.failures)
+def _rage_facts(context: Context) -> RageFacts:
     page = find_top_rage_page(context.team, context.user)
-    facts = (
-        RageFacts(
-            page=page,
-            element=context.guard(
-                "rage_element", lambda: find_top_rage_element(context.team, context.user, page.path), None
-            ),
-            errors=context.guard(
-                "rage_errors", lambda: find_errors_before_rage(context.team, context.user, page.path), NO_ERRORS
-            ),
-        )
-        if page
-        else RageFacts(page=None)
+    if page is None:
+        return RageFacts(page=None)
+    return RageFacts(
+        page=page,
+        element=context.guard(
+            "rage_element", lambda: find_top_rage_element(context.team, context.user, page.path), None
+        ),
+        errors=context.guard(
+            "rage_errors", lambda: find_errors_before_rage(context.team, context.user, page.path), NO_ERRORS
+        ),
     )
-    if len(context.failures) == failures:
-        cache.set(key, facts, DAY_SECONDS)
-    return facts
 
 
 def _error_item(context: Context, page: RagePage, errors: ErrorsBeforeRage, title: str) -> Candidate | None:

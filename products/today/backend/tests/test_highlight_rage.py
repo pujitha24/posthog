@@ -5,7 +5,6 @@ from typing import cast
 
 from unittest.mock import patch
 
-from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from parameterized import parameterized
@@ -31,9 +30,6 @@ ERROR_ITEM = (
 
 
 class TestRage(SimpleTestCase):
-    def setUp(self) -> None:
-        cache.clear()
-
     @parameterized.expand(
         [
             (
@@ -100,7 +96,7 @@ class TestRage(SimpleTestCase):
                 team=SimpleNamespace(id=1),
                 user=SimpleNamespace(id=2),
                 today=date(2026, 10, 13),
-                restrictions="none",
+                daily=lambda _name, compute: compute(),
                 failures=[],
                 allows=lambda *scopes: reads_errors,
                 guard=lambda _name, provider, _default: provider(),

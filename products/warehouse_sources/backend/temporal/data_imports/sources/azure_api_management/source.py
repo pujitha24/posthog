@@ -9,10 +9,11 @@ from products.warehouse_sources.backend.facade.source_config import (
     SourceConfig,
 )
 from products.warehouse_sources.backend.temporal.data_imports.sources.azure_log_analytics.azure_log_analytics import (
+    PROBE_REQUEST_TIMEOUT_SECONDS,
     AzureLogAnalyticsClient,
     AzureLogAnalyticsResumeConfig,
     azure_log_analytics_source,
-    table_unreadable_reason,
+    probe_tables,
     validate_credentials as validate_log_analytics_credentials,
 )
 from products.warehouse_sources.backend.temporal.data_imports.sources.azure_log_analytics.source import (
@@ -119,8 +120,10 @@ Register an app in Microsoft Entra ID, create a client secret for it, and give i
             config.client_secret,
             config.workspace_id,
             structlog.get_logger(__name__),
+            request_timeout=PROBE_REQUEST_TIMEOUT_SECONDS,
+            max_attempts=1,
         )
-        return {endpoint: table_unreadable_reason(client, endpoint) for endpoint in endpoints}
+        return probe_tables(client, endpoints)
 
     def validate_credentials(
         self,

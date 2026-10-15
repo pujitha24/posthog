@@ -83,7 +83,7 @@ def _rows(query: str, team: "Team", user: "User", name: str, path: str | None = 
             query_type=name,
             placeholders={"path": ast.Constant(value=path)} if path is not None else {},
             user=user,
-            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
+            settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
         ).results
         or []
     )

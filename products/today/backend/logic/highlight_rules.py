@@ -28,7 +28,7 @@ def short(text: str, limit: int = 60) -> str:
     return text[:limit].rsplit(" ", 1)[0].rstrip(",;:(-– ")
 
 
-def uses_product(context: Context, product_path: str) -> bool:
+def uses_product(context: Context, *product_paths: str) -> bool:
     return UserProductList.objects.filter(
-        team_id=context.team.id, user_id=context.user.id, enabled=True, product_path__iexact=product_path
+        team_id=context.team.id, user_id=context.user.id, enabled=True, product_path__in=product_paths
     ).exists()

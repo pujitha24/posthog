@@ -28,34 +28,29 @@ MIN_PEOPLE = 100
 def find(context: Context) -> Found:
     now = timezone.now()
     ended = list_ended_experiments_without_conclusion(
-        context.team.id, context.user.id, since=now - timedelta(days=ENDED_WINDOW_DAYS), limit=20
+        team_id=context.team.id, user_id=context.user.id, since=now - timedelta(days=ENDED_WINDOW_DAYS), limit=20
     )
     running = list_running_experiments(
-        context.team.id,
-        context.user.id,
+        team_id=context.team.id,
+        user_id=context.user.id,
         started_after=None if context.today.weekday() == 0 else now - timedelta(days=JUST_CROSSED_DAYS),
         started_before=now - timedelta(days=LONG_RUNNING_DAYS),
         limit=100,
     )
-    enrolled = (
-        context.guard(
-            "experiments_enrolled",
-            lambda: count_enrolled_people(context.team, context.user, [e.flag_key for e in running]),
-            None,
+    enrolled = context.guard(
+        "experiments_enrolled",
+        lambda: count_enrolled_people(
+            team=context.team, user=context.user, flag_keys=[experiment.flag_key for experiment in running]
+        ),
+        None,
+    )
+    counted = [] if enrolled is None else [(experiment, enrolled.get(experiment.flag_key, 0)) for experiment in running]
+    return Found(
+        items=(
+            *(_ended(context, experiment) for experiment in ended),
+            *(_few_users(experiment, people) for experiment, people in counted if people < MIN_PEOPLE),
         )
-        if running
-        else {}
     )
-    few_users = (
-        []
-        if enrolled is None
-        else [
-            _few_users(experiment, enrolled.get(experiment.flag_key, 0))
-            for experiment in running
-            if enrolled.get(experiment.flag_key, 0) < MIN_PEOPLE
-        ]
-    )
-    return Found(items=(*(_ended(context, experiment) for experiment in ended), *few_users))
 
 
 def _days_since(context: Context, moment: datetime) -> int:

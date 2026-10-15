@@ -145,7 +145,7 @@ def get_experiment_health_findings(
 
 
 def list_ended_experiments_without_conclusion(
-    team_id: int, user_id: int, *, since: datetime, limit: int
+    *, team_id: int, user_id: int, since: datetime, limit: int
 ) -> list[EndedExperiment]:
     rows = (
         ExperimentModel.objects.filter(
@@ -163,7 +163,7 @@ def list_ended_experiments_without_conclusion(
 
 
 def list_running_experiments(
-    team_id: int, user_id: int, *, started_after: datetime | None, started_before: datetime, limit: int
+    *, team_id: int, user_id: int, started_after: datetime | None, started_before: datetime, limit: int
 ) -> list[RunningExperiment]:
     experiments = ExperimentModel.objects.filter(
         team_id=team_id,
@@ -181,7 +181,7 @@ def list_running_experiments(
     ]
 
 
-def count_enrolled_people(team: Team, user: User, flag_keys: list[str]) -> dict[str, int]:
+def count_enrolled_people(*, team: Team, user: User, flag_keys: list[str]) -> dict[str, int]:
     return enrolled_people_by_flag(team, user, flag_keys)
 
 

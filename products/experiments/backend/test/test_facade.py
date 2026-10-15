@@ -1,19 +1,25 @@
 """Tests for experiments facade layer."""
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import time_machine
-from posthog.test.base import APIBaseTest, BaseTest, ClickhouseTestMixin, _create_event, flush_persons_and_events
+from posthog.test.base import (
+    APIBaseTest,
+    BaseTest,
+    ClickhouseTestMixin,
+    _create_event,
+    _create_flag_evaluations,
+    flush_persons_and_events,
+)
 
 from django.utils import timezone
 
 from parameterized import parameterized
 
-from posthog.clickhouse.client import sync_execute
 from posthog.models.organization import Organization
 from posthog.models.team import Team
+from posthog.models.user import User
 from posthog.test.persons import create_person
 
 from products.experiments.backend.facade import api, count_running_experiments_on_feature_flag_called, create_experiment
@@ -203,10 +209,10 @@ class TestCountRunningExperimentsOnFeatureFlagCalled(BaseTest):
 
 @time_machine.travel("2026-10-14T12:00:00Z", tick=False)
 class TestHighlightFacts(BaseTest):
-    def _experiment(self, name: str, **fields: object) -> Experiment:
+    def _experiment(self, name: str, created_by: User | None = None, **fields: object) -> Experiment:
         flag = FeatureFlag.objects.create(team=self.team, key=f"flag-{uuid.uuid4().hex[:8]}", created_by=self.user)
         return Experiment.objects.create(
-            **{"team": self.team, "name": name, "feature_flag": flag, "created_by": self.user, **fields}
+            team=self.team, name=name, feature_flag=flag, created_by=created_by or self.user, **fields
         )
 
     def test_lists_ended_experiments_without_a_conclusion(self) -> None:
@@ -214,20 +220,17 @@ class TestHighlightFacts(BaseTest):
         started = now - timedelta(days=30)
         ended_at = now - timedelta(days=1)
         listed = self._experiment("Pricing page layout", start_date=started, end_date=ended_at)
-        self._experiment("Concluded", start_date=started, end_date=now - timedelta(days=1), conclusion="won")
+        self._experiment("Concluded", start_date=started, end_date=ended_at, conclusion="won")
         self._experiment("Ended long ago", start_date=started, end_date=now - timedelta(days=10))
-        self._experiment("Archived", start_date=started, end_date=now - timedelta(days=1), archived=True)
-        self._experiment("Deleted", start_date=started, end_date=now - timedelta(days=1), deleted=True)
+        self._experiment("Archived", start_date=started, end_date=ended_at, archived=True)
+        self._experiment("Deleted", start_date=started, end_date=ended_at, deleted=True)
         self._experiment("Still running", start_date=started)
         self._experiment(
-            "Not yours",
-            start_date=started,
-            end_date=now - timedelta(days=1),
-            created_by=self._create_user("other@example.com"),
+            "Not yours", start_date=started, end_date=ended_at, created_by=self._create_user("other@example.com")
         )
 
         assert api.list_ended_experiments_without_conclusion(
-            self.team.pk, self.user.pk, since=now - timedelta(days=7), limit=20
+            team_id=self.team.pk, user_id=self.user.pk, since=now - timedelta(days=7), limit=20
         ) == [EndedExperiment(id=listed.id, name="Pricing page layout", ended_at=ended_at)]
 
     @parameterized.expand(
@@ -237,22 +240,29 @@ class TestHighlightFacts(BaseTest):
         self, _name: str, started_after_days: int | None, expected: list[str]
     ) -> None:
         now = timezone.now()
-        old = self._experiment("Onboarding tips", start_date=now - timedelta(days=80))
-        recent = self._experiment("Checkout copy", start_date=now - timedelta(days=62))
+        listed = {
+            experiment.name: experiment.feature_flag.key
+            for experiment in (
+                self._experiment("Onboarding tips", start_date=now - timedelta(days=80)),
+                self._experiment("Checkout copy", start_date=now - timedelta(days=62)),
+            )
+        }
         self._experiment("Started recently", start_date=now - timedelta(days=10))
         self._experiment("Draft")
         self._experiment("Ended", start_date=now - timedelta(days=80), end_date=now - timedelta(days=1))
+        self._experiment(
+            "Not yours", start_date=now - timedelta(days=80), created_by=self._create_user("other@example.com")
+        )
 
         found = api.list_running_experiments(
-            self.team.pk,
-            self.user.pk,
+            team_id=self.team.pk,
+            user_id=self.user.pk,
             started_after=None if started_after_days is None else now - timedelta(days=started_after_days),
             started_before=now - timedelta(days=60),
             limit=20,
         )
 
-        assert [e.name for e in found] == expected
-        assert {e.flag_key for e in found} <= {old.feature_flag.key, recent.feature_flag.key}
+        assert [(e.name, e.flag_key) for e in found] == [(name, listed[name]) for name in expected]
 
 
 class TestCountEnrolledPeople(ClickhouseTestMixin, BaseTest):
@@ -275,34 +285,19 @@ class TestCountEnrolledPeople(ClickhouseTestMixin, BaseTest):
         ]
         for flag_key, response, days_ago in calls:
             distinct_id = str(uuid.uuid4())
-            create_person(team=self.team, distinct_ids=[distinct_id])
-            called_at = self._ago(days_ago)
-            properties = {"$feature_flag": flag_key, "$feature_flag_response": response}
             if mode == FlagEvaluationsMode.EVENTS:
+                create_person(team=self.team, distinct_ids=[distinct_id])
                 _create_event(
                     team=self.team,
                     event="$feature_flag_called",
                     distinct_id=distinct_id,
-                    properties=properties,
-                    timestamp=called_at,
+                    properties={"$feature_flag": flag_key, "$feature_flag_response": response},
+                    timestamp=self._ago(days_ago),
                 )
             else:
-                sync_execute(
-                    "INSERT INTO writable_flag_evaluations"
-                    " (uuid, event, properties, timestamp, team_id, distinct_id, created_at, person_id) VALUES",
-                    [
-                        (
-                            str(uuid.uuid4()),
-                            "$feature_flag_called",
-                            json.dumps(properties),
-                            called_at,
-                            self.team.pk,
-                            distinct_id,
-                            called_at,
-                            str(uuid.uuid4()),
-                        )
-                    ],
+                _create_flag_evaluations(
+                    self.team.pk, flag_key, timestamp=self._ago(days_ago), distinct_id=distinct_id, response=response
                 )
         flush_persons_and_events()
 
-        assert api.count_enrolled_people(self.team, self.user, ["checkout"]) == {"checkout": 2}
+        assert api.count_enrolled_people(team=self.team, user=self.user, flag_keys=["checkout"]) == {"checkout": 2}

@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 
 from unittest.mock import patch
 
-from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from parameterized import parameterized
@@ -41,9 +40,6 @@ def basics(name: str) -> ErrorTrackingIssueBasics:
 
 
 class TestErrors(SimpleTestCase):
-    def setUp(self) -> None:
-        cache.clear()
-
     def _find(
         self, new: list[NewIssueActivity], quiet: list[ErrorTrackingIssueBasics], *, relevant: bool = True
     ) -> list[tuple[str, str, str | None]]:
@@ -53,7 +49,7 @@ class TestErrors(SimpleTestCase):
                 team=SimpleNamespace(id=1, timezone_info=ZoneInfo("UTC")),
                 user=SimpleNamespace(id=2),
                 today=date(2026, 10, 13),
-                restrictions="none",
+                daily=lambda _name, compute: compute(),
             ),
         )
         registered = next(s for s in load_sources() if s.name == "errors")

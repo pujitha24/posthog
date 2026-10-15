@@ -1,4 +1,3 @@
-from django.core.cache import cache
 from django.utils import timezone
 
 from products.error_tracking.backend.facade.api import (
@@ -27,7 +26,6 @@ QUIET_ISSUES = 500
 MIN_CLIENT_USERS = 50
 MIN_CLIENT_SHARE = 0.002
 MIN_SERVER_SHARE = 0.02
-DAY_SECONDS = 24 * 60 * 60
 
 
 def find(context: Context) -> Found:
@@ -42,20 +40,10 @@ def _new_errors(context: Context) -> list[Candidate]:
     issues = list_new_unassigned_issue_activity(context.team, context.user, limit=NEW_ISSUES)
     if not issues:
         return []
-    totals = _daily_totals(context)
+    totals = context.daily("exception_totals", lambda: get_weekly_exception_totals(context.team, context.user))
     relevant = uses_product(context, "Error tracking")
     candidates = [_new_error(context, issue, totals, relevant) for issue in issues]
     return [candidate for candidate in candidates if candidate is not None]
-
-
-def _daily_totals(context: Context) -> WeeklyExceptionTotals:
-    key = f"today_highlights:exception_totals:v1:{context.team.id}:{context.restrictions}:{context.today.isoformat()}"
-    cached = cache.get(key)
-    if isinstance(cached, WeeklyExceptionTotals):
-        return cached
-    totals = get_weekly_exception_totals(context.team, context.user)
-    cache.set(key, totals, DAY_SECONDS)
-    return totals
 
 
 def _new_error(

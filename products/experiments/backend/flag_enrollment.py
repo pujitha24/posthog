@@ -36,6 +36,6 @@ def enrolled_people_by_flag(team: Team, user: User, flag_keys: list[str]) -> dic
         query_type="experiments_enrolled_people_by_flag",
         placeholders={"flag_keys": ast.Tuple(exprs=[ast.Constant(value=key) for key in flag_keys])},
         user=user,
-        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS),
+        settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),
     )
     return dict(result.results or [])

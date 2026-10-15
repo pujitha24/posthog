@@ -1,0 +1,76 @@
+from datetime import datetime, timedelta
+
+from posthog.test.base import BaseTest, ClickhouseTestMixin, _create_event, flush_persons_and_events
+
+from django.utils import timezone
+
+from parameterized import parameterized
+
+from posthog.constants import AvailableFeature
+from posthog.models import PropertyDefinition
+from posthog.test.persons import create_person
+
+from products.access_control.backend.facade.api import upsert_property_access_control
+from products.access_control.backend.facade.contracts import PropertyAccessLevel, UpsertPropertyAccessControlInput
+from products.customer_analytics.backend.facade.api import get_key_metrics
+
+
+class TestKeyMetrics(ClickhouseTestMixin, BaseTest):
+    def _midnight(self) -> datetime:
+        return timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    @parameterized.expand(
+        [
+            ("an unrestricted viewer", False, {"signup_event": (7.0, 7.0), "activity_event": (2.0, 2.0)}),
+            ("a viewer who cannot read the browser", True, {"signup_event": (0.0, 0.0), "activity_event": (2.0, 2.0)}),
+        ]
+    )
+    def test_key_metrics_count_filtered_events_and_weekly_unique_people(
+        self, _name: str, restricted: bool, expected: dict[str, tuple[float, float]]
+    ) -> None:
+        self.organization.available_product_features = [
+            {"key": AvailableFeature.PROPERTY_ACCESS_CONTROL, "name": AvailableFeature.PROPERTY_ACCESS_CONTROL}
+        ]
+        self.organization.save()
+        viewer = self._create_user("viewer@example.com")
+        if restricted:
+            definition = PropertyDefinition.objects.create(
+                team=self.team, name="$browser", type=PropertyDefinition.Type.EVENT
+            )
+            upsert_property_access_control(
+                team_id=self.team.id,
+                created_by_id=None,
+                input=UpsertPropertyAccessControlInput(
+                    access_level=PropertyAccessLevel.NONE,
+                    property_definition_id=str(definition.id),
+                    organization_member_id=viewer.organization_memberships.get().id,
+                ),
+            )
+        config = self.team.customer_analytics_config
+        config.signup_event = {
+            "kind": "EventsNode",
+            "event": None,
+            "properties": [{"key": "$browser", "value": "Chrome", "operator": "exact", "type": "event"}],
+        }
+        config.activity_event = {"kind": "EventsNode", "event": "opened_file"}
+        config.payment_event = {"kind": "ActionsNode", "id": 999_999}
+        config.save()
+        for browser in ("Chrome", "Firefox"):
+            create_person(team=self.team, distinct_ids=[f"person-{browser}"])
+        for day in range(1, 21):
+            for browser in ("Chrome", "Firefox"):
+                _create_event(
+                    team=self.team,
+                    event="opened_file",
+                    distinct_id=f"person-{browser}",
+                    properties={"$browser": browser},
+                    timestamp=self._midnight() - timedelta(days=day) + timedelta(hours=12),
+                )
+        flush_persons_and_events()
+
+        metrics = get_key_metrics(team=self.team, user=viewer)
+
+        self.assertEqual(
+            ({m.key: (m.this_week, m.last_week) for m in metrics}, {m.key: len(m.daily) for m in metrics}),
+            (expected, {"signup_event": 35, "activity_event": 35}),
+        )

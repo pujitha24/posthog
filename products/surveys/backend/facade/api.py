@@ -13,16 +13,24 @@ from products.surveys.backend.desktop_feedback import (
     read_desktop_feedback_media,
     submit_desktop_feedback,
 )
-from products.surveys.backend.models import Survey
+from products.surveys.backend.models import Survey, SurveyResponseArchive
 from products.surveys.backend.responses.fetch_rows import RESPONSE_EVENT_FILTER, SUBMISSION_GROUPING_KEY
 
 QUERY_TIMEOUT_SECONDS = 10
 WEEKLY_RESPONSES = """
-SELECT properties.$survey_id AS survey_id,
-       uniqIf({grouping_key}, timestamp >= now() - INTERVAL 7 DAY) AS this_week,
-       uniqIf({grouping_key}, timestamp < now() - INTERVAL 7 DAY) AS last_week
-FROM events
-WHERE timestamp >= now() - INTERVAL 14 DAY AND {response_events} AND properties.$survey_id IN {survey_ids}
+SELECT survey_id,
+       countIf(submitted_at >= now() - INTERVAL 7 DAY) AS this_week,
+       countIf(submitted_at < now() - INTERVAL 7 DAY) AS last_week
+FROM (
+    SELECT properties.$survey_id AS survey_id,
+           {grouping_key} AS submission_key,
+           argMax(uuid, timestamp) AS representative_uuid,
+           max(timestamp) AS submitted_at
+    FROM events
+    WHERE timestamp >= now() - INTERVAL 14 DAY AND {response_events} AND properties.$survey_id IN {survey_ids}
+    GROUP BY survey_id, submission_key
+)
+WHERE {not_archived}
 GROUP BY survey_id
 """
 
@@ -46,6 +54,20 @@ def list_running_survey_responses(team: Team, user: User, *, limit: int) -> list
     )
     if not surveys:
         return []
+    archived_uuids = [
+        str(response_uuid)
+        for response_uuid in SurveyResponseArchive.objects.filter(
+            team_id=team.id, survey_id__in=[survey_id for survey_id, _ in surveys]
+        ).values_list("response_uuid", flat=True)
+    ]
+    not_archived = (
+        parse_expr(
+            "representative_uuid NOT IN {archived_uuids}",
+            {"archived_uuids": ast.Tuple(exprs=[ast.Constant(value=u) for u in archived_uuids])},
+        )
+        if archived_uuids
+        else ast.Constant(value=True)
+    )
     result = execute_hogql_query(
         WEEKLY_RESPONSES,
         team,
@@ -54,6 +76,7 @@ def list_running_survey_responses(team: Team, user: User, *, limit: int) -> list
             "grouping_key": parse_expr(SUBMISSION_GROUPING_KEY),
             "response_events": parse_expr(RESPONSE_EVENT_FILTER),
             "survey_ids": ast.Tuple(exprs=[ast.Constant(value=str(survey_id)) for survey_id, _ in surveys]),
+            "not_archived": not_archived,
         },
         user=user,
         settings=HogQLGlobalSettings(max_execution_time=QUERY_TIMEOUT_SECONDS, timeout_overflow_mode="throw"),

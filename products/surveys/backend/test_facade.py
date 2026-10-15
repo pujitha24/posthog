@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from products.product_tours.backend.models import ProductTour
 from products.surveys.backend.facade.api import SurveyResponses, list_running_survey_responses
-from products.surveys.backend.models import Survey
+from products.surveys.backend.models import Survey, SurveyResponseArchive
 
 
 class TestListRunningSurveyResponses(ClickhouseTestMixin, BaseTest):
@@ -33,13 +33,13 @@ class TestListRunningSurveyResponses(ClickhouseTestMixin, BaseTest):
         submission_id: str | None,
         event: str = "survey sent",
         partial: bool = False,
-    ) -> None:
+    ) -> str:
         properties: dict[str, object] = {"$survey_id": str(survey.id)}
         if submission_id:
             properties["$survey_submission_id"] = submission_id
         if partial:
             properties["$survey_partially_completed"] = "true"
-        _create_event(
+        return _create_event(
             team=self.team,
             event=event,
             distinct_id=str(uuid.uuid4()),
@@ -63,6 +63,9 @@ class TestListRunningSurveyResponses(ClickhouseTestMixin, BaseTest):
         self._response(running, 3, "submission-f", event="survey dismissed")
         self._response(running, 10, "submission-c")
         self._response(running, 20, "submission-d")
+        self._response(running, 9, "submission-g")
+        for archived in (self._response(running, 2, None), self._response(running, 2, "submission-g")):
+            SurveyResponseArchive.objects.create(team=self.team, survey=running, response_uuid=archived)
         flush_persons_and_events()
 
         assert list_running_survey_responses(self.team, self.user, limit=20) == [

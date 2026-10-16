@@ -30,6 +30,23 @@ const AssistantDataTableNode = z
     })
     .catchall(z.unknown())
 
+const AssistantBareHogQLQuery = z
+    .object({
+        kind: z.literal('HogQLQuery').default('HogQLQuery'),
+        query: z.string().describe('The HogQL query to run.'),
+    })
+    .catchall(z.unknown())
+
+const AssistantBIVisualizationNode = z
+    .object({
+        config: z
+            .record(z.string(), z.unknown())
+            .describe('Complete worksheet configuration, including shelves and filters. Validated by the insight API.'),
+        kind: z.literal('BIVisualizationNode').default('BIVisualizationNode'),
+        source: AssistantBareHogQLQuery,
+    })
+    .catchall(z.unknown())
+
 const AssistantInsightVizNode = z.object({
     kind: z.literal('InsightVizNode').default('InsightVizNode'),
     source: z
@@ -107,10 +124,7 @@ const AssistantDataVisualizationAxisDisplaySettings = z.object({
             "Override this series to mix chart types, such as bars and lines. `auto` uses the chart's display type."
         )
         .optional(),
-    label: z
-        .string()
-        .describe('Custom label for this series, shown in the legend and tooltips instead of the column name.')
-        .optional(),
+    label: z.string().describe('Series label in legends and tooltips; replaces the column name.').optional(),
     trendLine: z.coerce
         .boolean()
         .describe('Draw a linear trend line for this series. Only meaningful for line, bar, and area charts.')
@@ -127,15 +141,10 @@ const AssistantDataVisualizationAxisFormatting = z.object({
     style: z
         .enum(['none', 'number', 'short', 'percent'])
         .describe(
-            'Number formatting style.\n- `none` — no formatting.\n- `number` — thousands separators (e.g. `1,234`).\n- `short` — abbreviated large numbers (e.g. `1.2k`, `3.4M`).\n- `percent` — multiply the value by 100 and append a `%` sign, so pass a 0-1 ratio (`a / b`, not `100.0 * a / b`). Never pair it with a `%` suffix, which renders `47.3%%`.'
+            '`none`: unformatted; `number`: thousands separators; `short`: abbreviations (1.2k, 3.4M). `percent`: multiplies by 100 and adds `%`. Pass a 0–1 ratio (`a / b`) and omit the `%` suffix to avoid doubling it.'
         )
         .optional(),
-    suffix: z
-        .string()
-        .describe(
-            'Text appended to each value (e.g. ` ms`). Leave unset when `style` is `percent`, which already appends the `%` sign.'
-        )
-        .optional(),
+    suffix: z.string().describe('Value suffix (e.g. ` ms`). Omit for `percent`, which adds `%`.').optional(),
 })
 
 const AssistantDataVisualizationAxisSettings = z.object({
@@ -263,15 +272,9 @@ const AssistantBareInsightQuery = z
     })
     .catchall(z.unknown())
 
-const AssistantBareHogQLQuery = z
-    .object({
-        kind: z.literal('HogQLQuery').default('HogQLQuery'),
-        query: z.string().describe('The HogQL query to run.'),
-    })
-    .catchall(z.unknown())
-
 const InsightQuery = z.union([
     AssistantDataTableNode,
+    AssistantBIVisualizationNode,
     AssistantInsightVizNode,
     AssistantDataVisualizationNode,
     AssistantBareInsightQuery,

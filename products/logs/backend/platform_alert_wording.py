@@ -22,6 +22,7 @@ from products.alerts_platform.backend.facade.contracts import (
 )
 from products.logs.backend.alert_evaluation_key import window_end_of
 from products.logs.backend.logs_url_params import build_logs_url_params, has_filter_values
+from products.logs.backend.platform_source_config import filters_of
 
 # A resolve reports the count that ended the firing, so it is not a breach. A held check, which
 # only moves a paging incident, can be either, so it gets a neutral label.
@@ -32,11 +33,9 @@ _LABELS = {
 
 
 def describe_logs_transition(*, project_id: int, transition: AnnouncedTransition) -> SourceDescription:
-    # `source_config` holds the alert's filters beside the platform's `condition` key, which none
-    # of the readers below look at.
     return SourceDescription(
         details=_details(transition),
-        context=_context(transition.source_config),
+        context=_context(filters_of(transition.source_config)),
         data_link=MessageLink(label="View logs", url=_logs_url(project_id, transition)),
     )
 
@@ -89,7 +88,7 @@ def _window_params(transition: AnnouncedTransition) -> str:
     window_end = window_end_of(transition.evaluation_key)
     date_to = _in_utc(replace(transition, occurred_at=window_end) if window_end else transition).occurred_at
     date_from = date_to - timedelta(minutes=transition.condition["window_minutes"])
-    return build_logs_url_params(transition.source_config, date_from=date_from, date_to=date_to)
+    return build_logs_url_params(filters_of(transition.source_config), date_from=date_from, date_to=date_to)
 
 
 _LEGACY_WEBHOOK_TYPES: Final = {
@@ -115,7 +114,7 @@ def legacy_logs_webhook_body(
     """
     transition = _in_utc(transition)
     occurred_at = transition.occurred_at
-    filters = transition.source_config
+    filters = filters_of(transition.source_config)
     alert_url = absolute_uri(f"/project/{project_id}/logs/alerts/{alert_id}")
     data: dict[str, Any] = {
         "alert_id": alert_id,

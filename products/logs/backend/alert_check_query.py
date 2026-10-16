@@ -602,6 +602,20 @@ class BatchedAlertCheckQuery:
 GROUPABLE_LOGS_COLUMNS: frozenset[str] = frozenset({"service_name", "severity_text"})
 
 
+def grouping_problem(keys: Sequence[str], threshold_operator: object) -> str | None:
+    """Why a logs alert grouped by `keys` cannot be evaluated, or None when it can."""
+    if unknown := set(keys) - GROUPABLE_LOGS_COLUMNS:
+        return (
+            f"A logs alert can only group by {', '.join(sorted(GROUPABLE_LOGS_COLUMNS))}, "
+            f"not {', '.join(sorted(unknown))}."
+        )
+    # A group with no matching log returns no row, so a service gone silent, the case a `below`
+    # alert exists for, is never seen unless it was already open.
+    if threshold_operator != "above":
+        return "A grouped logs alert can only alert above a threshold."
+    return None
+
+
 @dataclass(frozen=True)
 class GroupCounts:
     labels: dict[str, str]

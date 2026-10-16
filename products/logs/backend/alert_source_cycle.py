@@ -85,11 +85,11 @@ from products.alerts_platform.backend.facade.platform_metrics import (
 )
 from products.alerts_platform.backend.facade.scheduling import is_utc_datetime_blocked, parse_blocked_windows_tuples
 from products.logs.backend.alert_check_query import (
-    GROUPABLE_LOGS_COLUMNS,
     BatchedAlertCheckQuery,
     BucketedCount,
     GroupedAlertCheckQuery,
     fetch_live_logs_checkpoint,
+    grouping_problem,
     is_projection_eligible,
     resolve_alert_date_to,
     rolling_check_lookback_minutes,
@@ -756,13 +756,7 @@ def _labels_of(grouping_key: str) -> dict[str, str] | None:
 def _broken_grouping(check: PlatformAlertCheckInput) -> str | None:
     if check.grouping.mode == GroupingMode.SINGLE:
         return None
-    if set(check.grouping.keys) - GROUPABLE_LOGS_COLUMNS:
-        return f"A logs alert can only group by {', '.join(sorted(GROUPABLE_LOGS_COLUMNS))}"
-    # A group with no matching log returns no row, so a service gone silent, the case a `below`
-    # alert exists for, is never seen unless it was already open.
-    if check.condition.get("threshold_operator") != LogsAlertConfiguration.ThresholdOperator.ABOVE:
-        return "A grouped logs alert can only alert above a threshold"
-    return None
+    return grouping_problem(check.grouping.keys, check.condition.get("threshold_operator"))
 
 
 def _evaluate_grouped(

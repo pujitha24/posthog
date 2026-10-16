@@ -104,7 +104,7 @@ def update_configuration(
         current = edit_of(configuration)
         edit = _validated(SourceKind(configuration.source_kind), current, change(current))
 
-        if (edit.grouping.mode, edit.grouping.keys) != (current.grouping.mode, current.grouping.keys):
+        if not edit.grouping.splits_like(current.grouping):
             # The old keys never come back from a check, so each old instance would resolve and
             # announce a recovery that did not happen. They go, threads included, without a message.
             PlatformAlert.objects.for_team(team_id, canonical=True).filter(configuration=configuration).delete()

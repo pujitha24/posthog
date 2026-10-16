@@ -10,6 +10,7 @@ from datetime import datetime
 from uuid import UUID
 
 from django.db import transaction
+from django.utils import timezone as django_timezone
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -26,7 +27,7 @@ from products.alerts_platform.backend.facade.contracts import (
 )
 from products.alerts_platform.backend.facade.enums import PlatformAlertOwner
 from products.alerts_platform.backend.facade.scheduling import validate_and_normalize_schedule_restriction
-from products.alerts_platform.backend.logic import platform_reads, source_configs
+from products.alerts_platform.backend.logic import control_plane, platform_reads, source_configs
 from products.alerts_platform.backend.models import PlatformAlert, PlatformAlertConfiguration, PlatformAlertThread
 
 
@@ -112,9 +113,10 @@ def update_configuration(
         configuration = readable.select_for_update().first()
         if configuration is None:
             return None
-        edit = _apply(configuration, change)
+        edit, pending = _apply(configuration, change)
         if write_source is not None:
             write_source(edit)
+        control_plane.announce_after_commit(pending)
 
     return platform_reads.get_configuration(
         team_id=team_id, source_kinds=source_kinds, configuration_id=configuration_id
@@ -136,10 +138,35 @@ def update_owned_copy(
         configuration = _locked_owned_copy(team_id, legacy_configuration_id)
         if configuration is None:
             return
-        _apply(configuration, change)
+        _, pending = _apply(configuration, change)
         if snooze_changed:
+            if pending is None and snooze_until is not None and snooze_until > django_timezone.now():
+                # A snooze ends the firing, as on the logs stack. A firing after it opens a new incident.
+                pending = control_plane.end_firings(configuration, reason="snoozed", now=django_timezone.now())
             configuration.snooze_until = snooze_until
             configuration.save(update_fields=["snooze_until", "updated_at"])
+        control_plane.announce_after_commit(pending)
+
+
+def close_owned_firings_now(*, team_id: int, legacy_configuration_id: UUID) -> None:
+    """Ends the firings of a copy the platform owns and sends their resolves before returning.
+
+    For a delete, which removes the destinations a delivery after commit would look up. Call it
+    outside the delete's transaction, so the history it reads and the state it moved have committed.
+    """
+    with transaction.atomic():
+        configuration = (
+            PlatformAlertConfiguration.objects.for_team(team_id)
+            .select_for_update()
+            .filter(legacy_configuration_id=legacy_configuration_id, owner=PlatformAlertOwner.PLATFORM)
+            .first()
+        )
+        pending = (
+            None
+            if configuration is None
+            else control_plane.end_firings(configuration, reason="deleted", now=django_timezone.now())
+        )
+    control_plane.announce_now(pending)
 
 
 def delete_owned_copy(*, team_id: int, legacy_configuration_id: UUID) -> None:
@@ -169,14 +196,19 @@ def _locked_owned_copy(team_id: int, legacy_configuration_id: UUID) -> PlatformA
 def _apply(
     configuration: PlatformAlertConfiguration,
     change: Callable[[PlatformAlertConfigurationEdit], PlatformAlertConfigurationEdit],
-) -> PlatformAlertConfigurationEdit:
-    """Validates and writes an edit onto a configuration locked by the caller."""
+) -> tuple[PlatformAlertConfigurationEdit, control_plane.PendingClose | None]:
+    """Validates and writes an edit onto a configuration locked by the caller, and ends the firings it
+    makes meaningless."""
     if configuration.owner != PlatformAlertOwner.PLATFORM:
         raise PlatformAlertNotEditable(
             f"This alert is managed by the {configuration.source_kind} product. Edit it there."
         )
     current = edit_of(configuration)
     edit = _validated(SourceKind(configuration.source_kind), current, change(current))
+
+    ending = _firing_ending_change(current, edit)
+    # Before the instances change, so the history rows name the firings as they ran.
+    pending = control_plane.end_firings(configuration, reason=ending, now=django_timezone.now()) if ending else None
 
     if not edit.grouping.splits_like(current.grouping):
         # The old keys never come back from a check, so each old instance would resolve and
@@ -209,4 +241,17 @@ def _apply(
             "updated_at",
         ]
     )
-    return edit
+    return edit, pending
+
+
+def _firing_ending_change(current: PlatformAlertConfigurationEdit, edit: PlatformAlertConfigurationEdit) -> str | None:
+    """Why an edit ends the alert's firings, or None. The same edits that close an incident on the
+    logs stack: a disable, and a change to what the alert checks or how it decides."""
+    if current.enabled and not edit.enabled:
+        return "disabled"
+    if not edit.grouping.splits_like(current.grouping):
+        return "regrouped"
+    decides = ("source_config", "evaluation_periods", "datapoints_to_alarm")
+    if any(getattr(current, field) != getattr(edit, field) for field in decides):
+        return "config_changed"
+    return None

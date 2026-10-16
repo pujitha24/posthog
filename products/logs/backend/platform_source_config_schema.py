@@ -17,7 +17,7 @@ from products.alerts_platform.backend.facade.contracts import (
 )
 from products.logs.backend.alert_check_query import grouping_problem
 from products.logs.backend.models import LogsAlertConfiguration
-from products.logs.backend.platform_ownership import mirror_platform_edit
+from products.logs.backend.platform_ownership import incident_close_address, mirror_platform_edit
 from products.logs.backend.platform_source_config import WindowMinutes, has_any_filter
 
 
@@ -61,5 +61,8 @@ def validate_logs_edit(edit: PlatformAlertConfigurationEdit) -> None:
 
 
 LOGS_SOURCE_CONFIG = SourceConfigSpec(
-    model=LogsPlatformAlertSourceConfig, validate=validate_logs_edit, mirror=mirror_platform_edit
+    model=LogsPlatformAlertSourceConfig,
+    validate=validate_logs_edit,
+    mirror=mirror_platform_edit,
+    incident_address=incident_close_address,
 )
